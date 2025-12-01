@@ -1,0 +1,6 @@
+_wonderland/
+venv/
+__pycache__/
+*.pyc
+requirements.txt
+notes.txt

@@ -1,0 +1,55 @@
+{
+    "materials": [
+        {
+            "material_name": "SNCR1",
+            "face_color": "#cccccc",
+            "transparency": 1.0,
+            "edge_color": "black",
+            "hatch": "",
+            "frequency_unit": "GHz",
+            "frequency_dependent_data": [
+                {
+                    "frequency": 1.0,
+                    "eps_prime": 1.0,
+                    "eps_primeprime": 0.0,
+                    "mu_prime": 1.0,
+                    "mu_primeprime": 0.0
+                }
+            ]
+        },
+        {
+            "material_name": "F17",
+            "face_color": "#f0f0f0",
+            "transparency": 1.0,
+            "edge_color": "black",
+            "hatch": "",
+            "frequency_unit": "GHz",
+            "frequency_dependent_data": [
+                {
+                    "frequency": 1.0,
+                    "eps_prime": 1.0,
+                    "eps_primeprime": 0.0,
+                    "mu_prime": 1.0,
+                    "mu_primeprime": 0.0
+                }
+            ]
+        },
+        {
+            "material_name": "Primer",
+            "face_color": "#ffff00",
+            "transparency": 1.0,
+            "edge_color": "black",
+            "hatch": "",
+            "frequency_unit": "GHz",
+            "frequency_dependent_data": [
+                {
+                    "frequency": 1.0,
+                    "eps_prime": 1.0,
+                    "eps_primeprime": 0.0,
+                    "mu_prime": 1.0,
+                    "mu_primeprime": 0.0
+                }
+            ]
+        }
+    ]
+}
