@@ -57,14 +57,8 @@ class PydanticFormWidget(QWidget):
                 grid_fields_found = True
                 continue
             
-            # --- 2. Group Display Options (Hide Axis, Show Legend) ---
-            if name in ["hide_axis", "show_legend"]:
-                # Invert logic visually if needed, or keep as is.
-                # Request: "Hide Legend" checkbox ticked by default if show_legend is False?
-                # Actually user asked for "Hide Legend" checkbox.
-                # Our model has "show_legend".
-                # Let's display "Show Legend" and "Show Axis" (inverted hide_axis) for consistency?
-                # Or stick to model names. Let's stick to model names but group them.
+            # --- 2. Group Display Options (Hide Axis, Hide Legend) ---
+            if name in ["hide_axis", "hide_legend"]:
                 
                 label_text = name.replace("_", " ").title()
                 checkbox = QCheckBox(label_text)

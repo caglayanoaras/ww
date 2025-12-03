@@ -44,8 +44,15 @@
             "frequency_dependent_data": [
                 {
                     "frequency": 1.0,
-                    "eps_prime": 1.0,
-                    "eps_primeprime": 0.0,
+                    "eps_prime": 3.5,
+                    "eps_primeprime": 0.5,
+                    "mu_prime": 1.0,
+                    "mu_primeprime": 0.0
+                },
+                {
+                    "frequency": 100.0,
+                    "eps_prime": 3.5,
+                    "eps_primeprime": 0.5,
                     "mu_prime": 1.0,
                     "mu_primeprime": 0.0
                 }

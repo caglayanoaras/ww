@@ -122,7 +122,7 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
             self.ax.autoscale(enable=True, axis='y', tight=False)
 
         # 4. Legend (New Feature)
-        if style.show_legend:
+        if not style.hide_legend:
             # Only show legend if there are labeled items
             handles, labels = self.ax.get_legend_handles_labels()
             if handles:

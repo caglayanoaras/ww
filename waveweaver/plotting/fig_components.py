@@ -96,7 +96,7 @@ class AxesStyle(BaseModel):
     y_scale: Literal['linear', 'log', 'symlog', 'logit'] = "linear"
     
     # Appearance
-    show_legend: bool = True # New field for Legend toggle
+    hide_legend: bool = True # New field for Legend toggle
     tick_direction: Literal['in', 'out', 'inout'] = "in"
     grid_linestyle: Literal['Solid Line', 'Dashed Line', 'No Grid'] = 'No Grid'
     
