@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QMenuBar, QMenu, QMainWindow, QApplication,
     QLabel, QDialogButtonBox, QComboBox, QStackedWidget,
     QTextEdit, QProgressBar, QFrame, QPushButton, QGroupBox, 
-    QLineEdit, QFormLayout
+    QLineEdit, QFormLayout, QGridLayout
 )
 from PySide6.QtGui import QAction, QIcon, QDoubleValidator, QIntValidator
 from PySide6.QtCore import Qt
@@ -147,35 +147,34 @@ class MultilayerSimulationApp(QWidget):
         
         layout.addWidget(grp_freq)
 
-        # 2. Source Parameters (Refactored Layout)
+        # 2. Source Parameters (Aligned Grid Layout)
         grp_source = QGroupBox("Source Parameters")
-        source_main_layout = QVBoxLayout(grp_source)
-
-        # Row 1: Angles
-        row_ang = QHBoxLayout()
-        row_ang.addWidget(QLabel("Theta (°):"))
+        source_layout = QGridLayout(grp_source)
+        
+        # Initialize inputs
         self.inp_theta = QLineEdit("0.0")
         self.inp_theta.setValidator(QDoubleValidator())
-        row_ang.addWidget(self.inp_theta)
         
-        row_ang.addWidget(QLabel("Phi (°):"))
         self.inp_phi = QLineEdit("0.0")
         self.inp_phi.setValidator(QDoubleValidator())
-        row_ang.addWidget(self.inp_phi)
-        source_main_layout.addLayout(row_ang)
-
-        # Row 2: Polarization
-        row_pol = QHBoxLayout()
-        row_pol.addWidget(QLabel("pTE:"))
+        
         self.inp_pte = QLineEdit("1.0")
         self.inp_pte.setValidator(QDoubleValidator())
-        row_pol.addWidget(self.inp_pte)
         
-        row_pol.addWidget(QLabel("pTM:"))
         self.inp_ptm = QLineEdit("0.0")
         self.inp_ptm.setValidator(QDoubleValidator())
-        row_pol.addWidget(self.inp_ptm)
-        source_main_layout.addLayout(row_pol)
+
+        # Row 0: Theta and Phi
+        source_layout.addWidget(QLabel("Theta (°):"), 0, 0)
+        source_layout.addWidget(self.inp_theta, 0, 1)
+        source_layout.addWidget(QLabel("Phi (°):"), 0, 2)
+        source_layout.addWidget(self.inp_phi, 0, 3)
+
+        # Row 1: pTE and pTM
+        source_layout.addWidget(QLabel("pTE:"), 1, 0)
+        source_layout.addWidget(self.inp_pte, 1, 1)
+        source_layout.addWidget(QLabel("pTM:"), 1, 2)
+        source_layout.addWidget(self.inp_ptm, 1, 3)
 
         layout.addWidget(grp_source)
         
@@ -373,43 +372,40 @@ class MultilayerSimulationApp(QWidget):
         model.axes_style.x_label = "Transverse"
         model.axes_style.y_label = "Propagation Direction (Z)"
         model.axes_style.hide_axis = True
-        model.axes_style.x_limits = None
-        model.axes_style.y_limits = None
+        
+        # Set limits for whitespace
+        # Reduced left padding (-20) and increased right bound (160) to fit wider stack/text
+        # 'adjustable="box"' in set_aspect ensures these limits are respected
+        model.axes_style.x_limits = (-20, 160) 
+        model.axes_style.y_limits = None 
 
         # 3. Geometry Constants
         X_MIN = 0.0
-        X_MAX = 100.0
-        X_MID = 50.0
+        X_MAX = 90.0 # Increased width to make layers look wider
+        X_MID = X_MAX / 2
         Y_START = 100.0 # Build downwards
         
-        layers = data['layers']
+        # Calculate dimension positions relative to new width
+        DIM_X = X_MAX + 5
+        DIM_TEXT_X = DIM_X + 7
         
-        # --- Calculate Weighted Thickness for Visualization ---
-        # Logic: If a layer is very thin, we boost it so it's visible.
-        # "Smart Schematic Scale":
-        # 1. Find the sum of all thicknesses.
-        # 2. Any layer that is < 10% of total gets treated as if it were larger in the allocation.
+        layers = data['layers']
         
         phys_thicknesses = [l['thickness'] for l in layers]
         total_phys_thick = sum(phys_thicknesses)
         if total_phys_thick <= 0: total_phys_thick = 1.0
         
-        # Determine Minimum Visual Height (10% of total visual space of 100 units = 10 units)
-        MIN_VISUAL_H = 10.0 
+        N = len(layers)
+        if N < 1: N = 1
         
-        # Calculate visual weights
+        font_size = max(8, min(14, int(180 / (N + 5))))
+        # Reduced arrow scale to be slightly smaller
+        arrow_scale = max(8, min(20, int(240 / (N + 5))))
+        
         visual_weights = []
         for t in phys_thicknesses:
-            raw_fraction = t / total_phys_thick
-            # If raw visual height < min, boost weight
-            # This is a heuristic. Simple approach: calculate share.
-            # If t is tiny, assign weight = epsilon. If t is big, assign weight = t.
-            # Then normalize weights to sum to 100.
-            
-            # Simple Schematic Logic:
-            # We want w_i such that (w_i / sum(w)) * 100 >= MIN_VISUAL_H
-            # Let's just assign a "visual thickness" = max(t, threshold)
-            threshold = total_phys_thick * 0.1 # 10% threshold
+            # Min visual thickness logic (ensure at least 10% visibility for thin layers)
+            threshold = total_phys_thick * 0.1 
             vis_t = max(t, threshold)
             visual_weights.append(vis_t)
             
@@ -430,12 +426,14 @@ class MultilayerSimulationApp(QWidget):
             X=X_MIN, Y=Y_START, Width=X_MAX, Height=40,
             Facecolor=fc, Edgecolor='none', Hatch=ha, Label="Reflection Region"
         ))
+        
+        # Move Reflection Text to the RIGHT side (whitespace area)
         model.add_element(TextContent(
-            X=X_MID, Y=Y_START + 20, Content=f"Reflection\n({ref_mat})", Isbold=True
+            X=DIM_TEXT_X + 5, Y=Y_START + 20, Content=f"Reflection\n({ref_mat})", Isbold=True, Fontsize=font_size, HorizontalAlignment='left'
         ))
         
         # --- Incidence Arrow & Polarization Info ---
-        arrow_len = 25.0
+        arrow_len = arrow_scale
         target_x = X_MID
         target_y = Y_START
         src_x = target_x - arrow_len * math.sin(theta_rad)
@@ -443,14 +441,15 @@ class MultilayerSimulationApp(QWidget):
         
         model.add_element(Arrow(
             X1=src_x, Y1=src_y, X2=target_x, Y2=target_y, 
-            Color="red", MutationScale=25, Label="Incidence"
+            Color="red", MutationScale=arrow_scale, Label="Incidence"
         ))
         
-        # Info Text (Angle + Polarization)
-        info_text = f"θ={theta_deg:.1f}°\nTE: {pTE:.2f}, TM: {pTM:.2f}"
+        # Info Text (Angle + Polarization) - Moved near the arrow tail
+        # Small font for details
+        info_text = f"θ={theta_deg:.1f}°\nTE: {pTE:.3f}\nTM: {pTM:.3f}"
         model.add_element(TextContent(
             X=src_x, Y=src_y + 10, Content=info_text, 
-            Color="red", Fontsize=10, Isbold=True
+            Color="red", Fontsize=8, Isbold=True
         ))
 
         # --- B. Device Layers (Stacked Vertically) ---
@@ -462,7 +461,6 @@ class MultilayerSimulationApp(QWidget):
             fc, ec, ha = get_mat_props(mat_name)
             
             # Normalize thickness using our smart weights
-            # vis_height = (weight / total_weight) * 100
             vis_height = (visual_weights[i] / total_visual_weight) * 100.0
             
             rect_y = current_y - vis_height
@@ -474,19 +472,18 @@ class MultilayerSimulationApp(QWidget):
             
             model.add_element(TextContent(
                 X=X_MID, Y=rect_y + vis_height/2, 
-                Content=f"{mat_name}", Fontsize=9
+                Content=f"{mat_name}", Fontsize=font_size
             ))
             
-            # Dimension Arrow (Right Side)
-            dim_x = X_MAX + 5
+            # Dimension Arrow (Right Side - Shifted closer to rect)
             model.add_element(Arrow(
-                X1=dim_x, Y1=rect_y, X2=dim_x, Y2=rect_y+vis_height, 
-                Arrowstyle='<|-|>', Color='black', MutationScale=10
+                X1=DIM_X, Y1=rect_y, X2=DIM_X, Y2=rect_y+vis_height, 
+                Arrowstyle='<|-|>', Color='black', MutationScale=arrow_scale * 0.5
             ))
-            # Text Closer to Arrow (Shifted left or just closer in X)
+            # Text Closer to Arrow
             model.add_element(TextContent(
-                X=dim_x + 8, Y=rect_y + vis_height/2, # Changed from dim_x + 10
-                Content=f"{phys_thick} mm", Fontsize=8, HorizontalAlignment='left'
+                X=DIM_TEXT_X, Y=rect_y + vis_height/2, 
+                Content=f"{phys_thick} mm", Fontsize=font_size, HorizontalAlignment='left'
             ))
             
             current_y -= vis_height
@@ -499,9 +496,15 @@ class MultilayerSimulationApp(QWidget):
             X=X_MIN, Y=-40, Width=X_MAX, Height=40,
             Facecolor=fc, Edgecolor='none', Hatch=ha, Label="Transmission Region"
         ))
+        
+        # Move Transmission Text to the RIGHT side
         model.add_element(TextContent(
-            X=X_MID, Y=-20, Content=f"Transmission\n({trans_mat})", Isbold=True
+            X=DIM_TEXT_X + 5, Y=-20, Content=f"Transmission\n({trans_mat})", Isbold=True, Fontsize=font_size, HorizontalAlignment='left'
         ))
+        
+        # IMPORTANT: Force aspect ratio to 'equal' so angles look correct
+        # 'box' adjustable prevents overriding our x_limits
+        context.widget.canvas.ax.set_aspect('equal', adjustable='box')
         
         context.widget.render(model)
         self.model_a_tab_widget.setCurrentIndex(0)
