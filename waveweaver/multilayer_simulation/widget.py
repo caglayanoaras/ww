@@ -27,7 +27,18 @@ from waveweaver.materials.dialog import MaterialLibraryDialog
 from waveweaver.materials.manager import MaterialManager
 from waveweaver.multilayer_simulation.layer_dialog import LayerDefinitionDialog
 
+# Import the calculation engine
+# Ensure waveweaver/multilayer_simulation/engine.py exists
+try:
+    from waveweaver.multilayer_simulation.engine import SimulationEngine
+except ImportError:
+    print("Warning: SimulationEngine not found. Calculation will fail.")
+    SimulationEngine = None
+
 class TabContext:
+    """
+    Helper class to group the Data (Model) and View (Widget) for a single tab.
+    """
     def __init__(self, name: str):
         self.name = name
         self.model = FigureModel()
@@ -37,6 +48,7 @@ class TabContext:
         self.widget = MatplotlibWidget()
         self.widget.canvas.fig.set_facecolor("#f0f0f0")
         
+        # Hide standard toolbar buttons that might confuse the user
         for action in self.widget.toolbar.actions():
             tip = str(action.toolTip()).lower()
             if "customize" in tip or "subplots" in tip or "parameters" in tip:
@@ -62,6 +74,12 @@ class MultilayerSimulationApp(QWidget):
         self.main_layout.setSpacing(0)
         
         self.menu_bar = QMenuBar(self)
+        self.menu_bar.setStyleSheet("""
+            QMenuBar { background-color: #f0f0f0; border-bottom: 1px solid #dcdcdc; }
+            QMenuBar::item { spacing: 3px; padding: 6px 10px; background-color: transparent; color: black; }
+            QMenuBar::item:selected { background-color: #e0e0e0; }
+            QMenuBar::item:pressed { background: #d0d0d0; }
+        """)
         self.main_layout.addWidget(self.menu_bar)
         self.setup_menu()
 
@@ -121,6 +139,7 @@ class MultilayerSimulationApp(QWidget):
         self.change_model(0)
 
     def log_message(self, message: str):
+        """Helper to append text to the console."""
         self.console_output.append(message)
 
     def setup_model_a(self):
@@ -147,11 +166,10 @@ class MultilayerSimulationApp(QWidget):
         
         layout.addWidget(grp_freq)
 
-        # 2. Source Parameters (Aligned Grid Layout)
+        # 2. Source Parameters (Moved ABOVE Structure)
         grp_source = QGroupBox("Source Parameters")
         source_layout = QGridLayout(grp_source)
         
-        # Initialize inputs
         self.inp_theta = QLineEdit("0.0")
         self.inp_theta.setValidator(QDoubleValidator())
         
@@ -164,13 +182,12 @@ class MultilayerSimulationApp(QWidget):
         self.inp_ptm = QLineEdit("0.0")
         self.inp_ptm.setValidator(QDoubleValidator())
 
-        # Row 0: Theta and Phi
+        # Grid Alignment
         source_layout.addWidget(QLabel("Theta (°):"), 0, 0)
         source_layout.addWidget(self.inp_theta, 0, 1)
         source_layout.addWidget(QLabel("Phi (°):"), 0, 2)
         source_layout.addWidget(self.inp_phi, 0, 3)
 
-        # Row 1: pTE and pTM
         source_layout.addWidget(QLabel("pTE:"), 1, 0)
         source_layout.addWidget(self.inp_pte, 1, 1)
         source_layout.addWidget(QLabel("pTM:"), 1, 2)
@@ -229,8 +246,8 @@ class MultilayerSimulationApp(QWidget):
             self.tabs[id(context.widget)] = context
             
         add_tab("Layers")
-        add_tab("S-Parameters (Amp)")
-        add_tab("S-Parameters (Angle)")
+        add_tab("S-Parameters (dB)")
+        add_tab("S-Parameters (Phase)")
         
         self.result_stack.addWidget(self.model_a_tab_widget)
 
@@ -268,7 +285,12 @@ class MultilayerSimulationApp(QWidget):
             self.log_message("Error: Please define layers first.")
             return
 
+        if SimulationEngine is None:
+            self.log_message("Error: Engine module missing.")
+            return
+
         try:
+            # 1. Gather Inputs
             params = {
                 'freq_start': float(self.inp_fstart.text()),
                 'freq_stop': float(self.inp_fstop.text()),
@@ -281,40 +303,69 @@ class MultilayerSimulationApp(QWidget):
             }
             
             self.log_message(f"Starting calculation... Theta={params['theta']}°, Layers={len(params['layers']['layers'])}")
+            self.progress_bar.setValue(10) # Sim start
             
-            # --- MOCK CALCULATOR ---
-            freqs = np.linspace(params['freq_start'], params['freq_stop'], params['freq_points'])
-            center_freq = (params['freq_start'] + params['freq_stop']) / 2
-            bandwidth = (params['freq_stop'] - params['freq_start']) / 4
-            s11_amp = 1.0 - 0.9 * np.exp(-((freqs - center_freq)**2) / (2 * bandwidth**2))
-            s11_phase = np.angle(np.exp(1j * (freqs))) * 180 / np.pi
-            s21_amp = 0.9 * np.exp(-((freqs - center_freq)**2) / (2 * bandwidth**2))
-            s21_phase = np.angle(np.exp(1j * (freqs + np.pi/2))) * 180 / np.pi
+            # 2. Run Engine
+            # Note: For complex simulations, run this in a QThread to avoid freezing UI.
+            engine = SimulationEngine(params)
+            results = engine.run()
+            self.progress_bar.setValue(90)
             
-            self.plot_s_parameters(freqs, s11_amp, s21_amp, s11_phase, s21_phase)
+            # 3. Plot Results
+            self.plot_s_parameters(
+                results['freqs'], 
+                results['S11'], 
+                results['S21'], 
+                results['S12'], 
+                results['S22']
+            )
+            
+            # 4. Update Layer view to ensure arrow/text consistency
             self.draw_layers_on_canvas(self.current_layer_data) 
+            
+            self.progress_bar.setValue(100)
             self.log_message("Calculation complete.")
             
         except ValueError as e:
             self.log_message(f"Input Error: {str(e)}")
+        except Exception as e:
+            self.log_message(f"Simulation Error: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
-    def plot_s_parameters(self, freqs, s11_amp, s21_amp, s11_phase, s21_phase):
-        # 1. Amplitude Plot
-        amp_tab = self.get_tab_context("S-Parameters (Amp)")
-        if amp_tab:
-            model = amp_tab.model
+    def plot_s_parameters(self, freqs, s11, s21, s12, s22):
+        # --- Helper to convert to dB ---
+        def to_db(c_val):
+            mag = np.abs(c_val)
+            # Avoid log(0)
+            mag[mag < 1e-12] = 1e-12
+            return 20 * np.log10(mag)
+
+        # --- Helper to convert to Degrees ---
+        def to_deg(c_val):
+            # np.angle returns radians, convert to degrees
+            return np.angle(c_val, deg=True)
+
+        # 1. Amplitude Plot (dB)
+        db_tab = self.get_tab_context("S-Parameters (dB)")
+        if db_tab:
+            model = db_tab.model
             model.curves.clear()
             model.axes_style.x_label = "Frequency (GHz)"
-            model.axes_style.y_label = "Magnitude (Linear)"
+            model.axes_style.y_label = "Magnitude (dB)"
             model.axes_style.title = "S-Parameters (Magnitude)"
             model.axes_style.x_limits = None
             model.axes_style.y_limits = None
-            model.add_element(Curve(X=list(freqs), Y=list(s11_amp), Color="blue", Label="|S11| (Refl)", Linewidth=2))
-            model.add_element(Curve(X=list(freqs), Y=list(s21_amp), Color="red", Label="|S21| (Trans)", Linewidth=2, Linestyle="--"))
-            amp_tab.widget.render(model)
+            
+            model.add_element(Curve(X=list(freqs), Y=list(to_db(s11)), Color="blue", Label="S11", Linewidth=2))
+            model.add_element(Curve(X=list(freqs), Y=list(to_db(s21)), Color="red", Label="S21", Linewidth=2))
+            model.add_element(Curve(X=list(freqs), Y=list(to_db(s12)), Color="green", Label="S12", Linewidth=2, Linestyle="--"))
+            model.add_element(Curve(X=list(freqs), Y=list(to_db(s22)), Color="orange", Label="S22", Linewidth=2, Linestyle="--"))
+            
+            db_tab.widget.render(model)
 
         # 2. Angle Plot
-        phase_tab = self.get_tab_context("S-Parameters (Angle)")
+        phase_tab = self.get_tab_context("S-Parameters (Phase)")
         if phase_tab:
             model = phase_tab.model
             model.curves.clear()
@@ -323,8 +374,12 @@ class MultilayerSimulationApp(QWidget):
             model.axes_style.title = "S-Parameters (Phase)"
             model.axes_style.x_limits = None
             model.axes_style.y_limits = None
-            model.add_element(Curve(X=list(freqs), Y=list(s11_phase), Color="blue", Label="Ang(S11)", Linewidth=1.5))
-            model.add_element(Curve(X=list(freqs), Y=list(s21_phase), Color="red", Label="Ang(S21)", Linewidth=1.5, Linestyle="--"))
+            
+            model.add_element(Curve(X=list(freqs), Y=list(to_deg(s11)), Color="blue", Label="S11", Linewidth=1.5))
+            model.add_element(Curve(X=list(freqs), Y=list(to_deg(s21)), Color="red", Label="S21", Linewidth=1.5))
+            model.add_element(Curve(X=list(freqs), Y=list(to_deg(s12)), Color="green", Label="S12", Linewidth=1.5, Linestyle="--"))
+            model.add_element(Curve(X=list(freqs), Y=list(to_deg(s22)), Color="orange", Label="S22", Linewidth=1.5, Linestyle="--"))
+            
             phase_tab.widget.render(model)
 
     def get_tab_context(self, tab_name) -> Optional[TabContext]:
@@ -337,7 +392,6 @@ class MultilayerSimulationApp(QWidget):
     def draw_layers_on_canvas(self, data: dict):
         """
         Visualizes the layer stack VERTICALLY (Z-axis).
-        Includes Normalization of TE/TM and Schematic Scaling.
         """
         context = self.get_tab_context("Layers")
         if not context: return
@@ -352,14 +406,9 @@ class MultilayerSimulationApp(QWidget):
             pTE, pTM = 1.0, 0.0
             
         theta_rad = math.radians(theta_deg)
-        
-        # Normalize Polarization
         mag = math.sqrt(pTE**2 + pTM**2)
-        if mag == 0:
-            pTE, pTM = 1.0, 0.0 # Prevent div/0
-        else:
-            pTE /= mag
-            pTM /= mag
+        if mag == 0: pTE, pTM = 1.0, 0.0
+        else: pTE /= mag; pTM /= mag
 
         # 2. Prepare Model
         model = context.model
@@ -374,37 +423,31 @@ class MultilayerSimulationApp(QWidget):
         model.axes_style.hide_axis = True
         
         # Set limits for whitespace
-        # Reduced left padding (-20) and increased right bound (160) to fit wider stack/text
-        # 'adjustable="box"' in set_aspect ensures these limits are respected
-        model.axes_style.x_limits = (-20, 160) 
+        # Reduced left padding (-10) and increased right bound (140)
+        model.axes_style.x_limits = (-10, 140) 
         model.axes_style.y_limits = None 
 
         # 3. Geometry Constants
         X_MIN = 0.0
-        X_MAX = 90.0 # Increased width to make layers look wider
+        X_MAX = 85.0 
         X_MID = X_MAX / 2
-        Y_START = 100.0 # Build downwards
+        Y_START = 100.0 
         
-        # Calculate dimension positions relative to new width
         DIM_X = X_MAX + 5
         DIM_TEXT_X = DIM_X + 7
         
         layers = data['layers']
-        
         phys_thicknesses = [l['thickness'] for l in layers]
         total_phys_thick = sum(phys_thicknesses)
         if total_phys_thick <= 0: total_phys_thick = 1.0
         
         N = len(layers)
         if N < 1: N = 1
-        
         font_size = max(8, min(14, int(180 / (N + 5))))
-        # Reduced arrow scale to be slightly smaller
         arrow_scale = max(8, min(20, int(240 / (N + 5))))
         
         visual_weights = []
         for t in phys_thicknesses:
-            # Min visual thickness logic (ensure at least 10% visibility for thin layers)
             threshold = total_phys_thick * 0.1 
             vis_t = max(t, threshold)
             visual_weights.append(vis_t)
@@ -418,24 +461,20 @@ class MultilayerSimulationApp(QWidget):
                     return m.face_color, m.edge_color, m.hatch
             return "white", "black", ""
 
-        # --- A. Reflection Region (Source) - Top ---
+        # A. Reflection Region
         ref_mat = data['reflection_material']
         fc, ec, ha = get_mat_props(ref_mat)
-        
         model.add_element(Rectangle(
             X=X_MIN, Y=Y_START, Width=X_MAX, Height=40,
             Facecolor=fc, Edgecolor='none', Hatch=ha, Label="Reflection Region"
         ))
-        
-        # Move Reflection Text to the RIGHT side (whitespace area)
         model.add_element(TextContent(
             X=DIM_TEXT_X + 5, Y=Y_START + 20, Content=f"Reflection\n({ref_mat})", Isbold=True, Fontsize=font_size, HorizontalAlignment='left'
         ))
         
-        # --- Incidence Arrow & Polarization Info ---
+        # Incidence Arrow
         arrow_len = arrow_scale
-        target_x = X_MID
-        target_y = Y_START
+        target_x, target_y = X_MID, Y_START
         src_x = target_x - arrow_len * math.sin(theta_rad)
         src_y = target_y + arrow_len * math.cos(theta_rad)
         
@@ -444,68 +483,54 @@ class MultilayerSimulationApp(QWidget):
             Color="red", MutationScale=arrow_scale, Label="Incidence"
         ))
         
-        # Info Text (Angle + Polarization) - Moved near the arrow tail
-        # Small font for details
         info_text = f"θ={theta_deg:.1f}°\nTE: {pTE:.3f}\nTM: {pTM:.3f}"
         model.add_element(TextContent(
             X=src_x, Y=src_y + 10, Content=info_text, 
             Color="red", Fontsize=8, Isbold=True
         ))
 
-        # --- B. Device Layers (Stacked Vertically) ---
+        # B. Device Layers
         current_y = Y_START
-        
         for i, layer in enumerate(layers):
             phys_thick = layer['thickness']
             mat_name = layer['material']
             fc, ec, ha = get_mat_props(mat_name)
             
-            # Normalize thickness using our smart weights
             vis_height = (visual_weights[i] / total_visual_weight) * 100.0
-            
             rect_y = current_y - vis_height
             
             model.add_element(Rectangle(
                 X=X_MIN, Y=rect_y, Width=X_MAX, Height=vis_height,
                 Facecolor=fc, Edgecolor=ec, Hatch=ha, Label=f"Layer {i+1}"
             ))
-            
             model.add_element(TextContent(
                 X=X_MID, Y=rect_y + vis_height/2, 
                 Content=f"{mat_name}", Fontsize=font_size
             ))
             
-            # Dimension Arrow (Right Side - Shifted closer to rect)
+            # Dimension Arrow
             model.add_element(Arrow(
                 X1=DIM_X, Y1=rect_y, X2=DIM_X, Y2=rect_y+vis_height, 
                 Arrowstyle='<|-|>', Color='black', MutationScale=arrow_scale * 0.5
             ))
-            # Text Closer to Arrow
             model.add_element(TextContent(
                 X=DIM_TEXT_X, Y=rect_y + vis_height/2, 
                 Content=f"{phys_thick} mm", Fontsize=font_size, HorizontalAlignment='left'
             ))
-            
             current_y -= vis_height
 
-        # --- C. Transmission Region (Exit) - Bottom ---
+        # C. Transmission Region
         trans_mat = data['transmission_material']
         fc, ec, ha = get_mat_props(trans_mat)
-        
         model.add_element(Rectangle(
             X=X_MIN, Y=-40, Width=X_MAX, Height=40,
             Facecolor=fc, Edgecolor='none', Hatch=ha, Label="Transmission Region"
         ))
-        
-        # Move Transmission Text to the RIGHT side
         model.add_element(TextContent(
             X=DIM_TEXT_X + 5, Y=-20, Content=f"Transmission\n({trans_mat})", Isbold=True, Fontsize=font_size, HorizontalAlignment='left'
         ))
         
-        # IMPORTANT: Force aspect ratio to 'equal' so angles look correct
-        # 'box' adjustable prevents overriding our x_limits
         context.widget.canvas.ax.set_aspect('equal', adjustable='box')
-        
         context.widget.render(model)
         self.model_a_tab_widget.setCurrentIndex(0)
 

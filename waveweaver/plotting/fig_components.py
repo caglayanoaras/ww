@@ -10,9 +10,7 @@ class PlotObject(BaseModel):
     """
     model_config = ConfigDict(validate_assignment=True, extra='ignore')
 
-    # Label now has a default empty string, so it's no longer mandatory in the input dict
     Label: str = ""
-    # Color removed from base class as requested
     Zorder: float = 1.0
     Visible: bool = True
     
@@ -39,7 +37,7 @@ class Line(PlotObject):
     X2: float = 1.0
     Y1: float = 0.0
     Y2: float = 1.0
-    Color: str = 'black'  # Added here
+    Color: str = 'black'
     Linestyle: str = '-'
     Linewidth: float = 1.5
 
@@ -47,7 +45,7 @@ class Curve(PlotObject):
     type: Literal['Curve'] = 'Curve'
     X: List[float] = Field(default_factory=list)
     Y: List[float] = Field(default_factory=list)
-    Color: str = 'black'  # Added here
+    Color: str = 'black'
     Linestyle: str = '-'
     Linewidth: float = 1.5
     Marker: str = ''
@@ -60,7 +58,7 @@ class TextContent(PlotObject):
     X: float = 0.0
     Y: float = 0.0
     Content: str = ''
-    Color: str = 'black'  # Added here
+    Color: str = 'black'
     Fontsize: float = 10.0
     Isbold: bool = False
     Fontfamily: str = 'Arial'
@@ -73,7 +71,7 @@ class Arrow(PlotObject):
     X2: float = 1.0
     Y1: float = 0.0
     Y2: float = 1.0
-    Color: str = 'black'  # Added here
+    Color: str = 'black'
     Arrowstyle: str = '-|>'
     MutationScale: float = 20.0
 
@@ -82,7 +80,7 @@ class Fill(PlotObject):
     X: List[float] = Field(default_factory=list)
     Y1: List[float] = Field(default_factory=list)
     Y2: List[float] = Field(default_factory=list)
-    Color: str = 'black'  # Added here
+    Color: str = 'black'
     Alpha: float = 0.5
 
 # --- Figure Settings Container ---
@@ -98,8 +96,8 @@ class AxesStyle(BaseModel):
     y_scale: Literal['linear', 'log', 'symlog', 'logit'] = "linear"
     
     # Appearance
+    show_legend: bool = True # New field for Legend toggle
     tick_direction: Literal['in', 'out', 'inout'] = "in"
-    # Changed default from 'Solid Line' to 'No Grid'
     grid_linestyle: Literal['Solid Line', 'Dashed Line', 'No Grid'] = 'No Grid'
     
     face_color: str = "#ffffff"

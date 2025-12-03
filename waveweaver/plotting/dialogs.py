@@ -14,8 +14,6 @@ from waveweaver.plotting.fig_components import FigureModel, PlotObject
 class PydanticFormWidget(QWidget):
     """
     A generic widget that generates a form for a Pydantic model instance.
-    Updates the model instance in real-time or via apply_changes.
-    Includes special handling for grouping 'grid' checkboxes in a single row.
     """
     def __init__(self, model_instance: BaseModel, parent=None):
         super().__init__(parent)
@@ -31,31 +29,53 @@ class PydanticFormWidget(QWidget):
         if not self.model_instance:
             return
 
-        # Container for grid/tick checkboxes to place them in one row
+        # Container for grid/tick checkboxes
         grid_layout_container = QWidget()
         grid_layout = QHBoxLayout(grid_layout_container)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_fields_found = False
 
-        # Iterate over fields in the Pydantic model
+        # NEW: Container for general display options (Hide Axis / Hide Legend)
+        display_opts_container = QWidget()
+        display_opts_layout = QHBoxLayout(display_opts_container)
+        display_opts_layout.setContentsMargins(0, 0, 0, 0)
+        display_opts_found = False
+
         for name, field in self.model_instance.model_fields.items():
             if name in ['UniqueID', 'Status', 'type']:
                 continue
 
             current_value = getattr(self.model_instance, name)
             
-            # --- Grid/Tick Grouping Logic ---
+            # --- 1. Group Grid/Tick Checkboxes ---
             if name.startswith("show_grid_"):
-                # Create a concise checkbox label (e.g. "Major X", "Minor Y")
                 label_text = name.replace("show_grid_", "").replace("_", " ").title()
                 checkbox = QCheckBox(label_text)
                 checkbox.setChecked(bool(current_value))
                 grid_layout.addWidget(checkbox)
                 self.widgets[name] = checkbox
                 grid_fields_found = True
-                continue # Skip standard rendering
+                continue
             
-            # --- Standard Rendering ---
+            # --- 2. Group Display Options (Hide Axis, Show Legend) ---
+            if name in ["hide_axis", "show_legend"]:
+                # Invert logic visually if needed, or keep as is.
+                # Request: "Hide Legend" checkbox ticked by default if show_legend is False?
+                # Actually user asked for "Hide Legend" checkbox.
+                # Our model has "show_legend".
+                # Let's display "Show Legend" and "Show Axis" (inverted hide_axis) for consistency?
+                # Or stick to model names. Let's stick to model names but group them.
+                
+                label_text = name.replace("_", " ").title()
+                checkbox = QCheckBox(label_text)
+                checkbox.setChecked(bool(current_value))
+                
+                display_opts_layout.addWidget(checkbox)
+                self.widgets[name] = checkbox
+                display_opts_found = True
+                continue
+
+            # --- 3. Standard Rendering ---
             annotation = field.annotation
             origin = get_origin(annotation)
             
@@ -84,11 +104,9 @@ class PydanticFormWidget(QWidget):
                 widget.addItems([str(opt) for opt in literal_options])
                 widget.setCurrentText(str(current_value))
                 
-            # FIX: Added 'tuple' to the isinstance check here
             elif isinstance(current_value, (int, float, str, list, tuple)) or current_value is None:
                 widget = QLineEdit()
                 if isinstance(current_value, (tuple, list)):
-                    # Format items: round floats to 4 decimals for cleaner display
                     formatted_items = []
                     for item in current_value:
                         if isinstance(item, float):
@@ -103,12 +121,14 @@ class PydanticFormWidget(QWidget):
                 self.layout.addRow(label, widget)
                 self.widgets[name] = widget
 
-        # Add the grid row if any grid fields were found
+        # Add grouped rows
+        if display_opts_found:
+            self.layout.addRow(QLabel("Display Options"), display_opts_container)
+            
         if grid_fields_found:
             self.layout.addRow(QLabel("Tick Options"), grid_layout_container)
 
     def apply_changes(self):
-        """Reads widgets and updates the model."""
         for name, widget in self.widgets.items():
             try:
                 value = None
@@ -148,18 +168,13 @@ class PydanticFormWidget(QWidget):
                 print(f"Error setting field {name}: {e}")
 
 class ObjectListEditor(QWidget):
-    """
-    Master-Detail view for a specific list of PlotObjects (e.g. all Rectangles).
-    Allows selecting an object to edit it, or deleting it.
-    """
     def __init__(self, object_list: list, parent=None):
         super().__init__(parent)
-        self.object_list = object_list # Reference to the mutable list in FigureModel
+        self.object_list = object_list 
         self.current_form = None
         
         self.layout = QHBoxLayout(self)
         
-        # Left: List of objects
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         self.list_widget = QListWidget()
@@ -167,7 +182,6 @@ class ObjectListEditor(QWidget):
         
         self.delete_btn = QPushButton("Delete Selected")
         self.delete_btn.clicked.connect(self.delete_selected)
-        # Apply Red Rounded Style
         self.delete_btn.setStyleSheet("""
             QPushButton {
                 min-height: 30px;
@@ -188,10 +202,9 @@ class ObjectListEditor(QWidget):
         left_layout.addWidget(self.list_widget)
         left_layout.addWidget(self.delete_btn)
         
-        # Right: Form Area (Scrollable)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setWidget(QWidget()) # Placeholder
+        self.scroll_area.setWidget(QWidget()) 
         
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_widget)
@@ -203,49 +216,36 @@ class ObjectListEditor(QWidget):
         self.refresh_list()
 
     def refresh_list(self):
-        """Populates the list widget from the data list."""
         self.list_widget.clear()
         for idx, obj in enumerate(self.object_list):
             label = getattr(obj, "Label", f"Item {idx}")
             unique_id = getattr(obj, "UniqueID", "")
-            
-            # Format: Label (UniqueID) to make it easier to identify specific objects
             if unique_id:
                 display_text = f"{label} ({unique_id})"
             else:
                 display_text = label
-                
             self.list_widget.addItem(display_text)
 
     def on_item_selected(self, item):
         idx = self.list_widget.row(item)
         if 0 <= idx < len(self.object_list):
             obj = self.object_list[idx]
-            
-            # Create form
             self.current_form = PydanticFormWidget(obj)
             self.scroll_area.setWidget(self.current_form)
 
     def delete_selected(self):
         row = self.list_widget.currentRow()
         if row >= 0:
-            # Remove from data list
             del self.object_list[row]
-            # Remove from UI
             self.list_widget.takeItem(row)
-            # Clear form if needed
             self.scroll_area.setWidget(QWidget())
             self.current_form = None
 
     def apply_current_changes(self):
-        """Forces the currently active form to save its state."""
         if self.current_form:
             self.current_form.apply_changes()
 
 class PlotParametersDialog(QDialog):
-    """
-    The main dialog container.
-    """
     def __init__(self, parent=None, model_instance: FigureModel = None):
         super().__init__(parent)
         self.setWindowTitle("Figure Parameters")
@@ -254,19 +254,16 @@ class PlotParametersDialog(QDialog):
         self.editors: List[Union[PydanticFormWidget, ObjectListEditor]] = []
 
         self.layout = QVBoxLayout(self)
-        
         self.tabs = QTabWidget()
         self.layout.addWidget(self.tabs)
         
         self._init_tabs()
 
-        # Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.button(QDialogButtonBox.Apply).clicked.connect(self.apply_all)
         self.button_box.accepted.connect(self.accept_all)
         self.button_box.rejected.connect(self.reject)
         
-        # Apply Standard Rounded Style to Button Box
         self.button_box.setStyleSheet("""
             QPushButton {
                 min-height: 30px;
@@ -290,18 +287,15 @@ class PlotParametersDialog(QDialog):
         if not self.model:
             return
 
-        # Tab 1: Axes Style (Single Form)
         axes_editor = PydanticFormWidget(self.model.axes_style)
         self.tabs.addTab(axes_editor, "Axes Style")
         self.editors.append(axes_editor)
         
-        # Helper to add object list tabs
         def add_list_tab(name, data_list):
             editor = ObjectListEditor(data_list)
             self.tabs.addTab(editor, name)
             self.editors.append(editor)
 
-        # Tabs for each collection
         add_list_tab("Rectangles", self.model.rectangles)
         add_list_tab("Lines", self.model.lines)
         add_list_tab("Curves", self.model.curves)
@@ -310,7 +304,6 @@ class PlotParametersDialog(QDialog):
         add_list_tab("Fills", self.model.fills)
 
     def apply_all(self):
-        """Trigger apply on all sub-editors."""
         for editor in self.editors:
             if isinstance(editor, PydanticFormWidget):
                 editor.apply_changes()

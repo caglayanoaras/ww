@@ -26,7 +26,7 @@
         },
         {
             "material_name": "Air",
-            "face_color": "#808080",
+            "face_color": "#dadada",
             "transparency": 0.8,
             "edge_color": "black",
             "hatch": "",

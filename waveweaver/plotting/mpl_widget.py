@@ -111,19 +111,24 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
             self._draw_fill(fill)
 
         # 3. Apply Limits or Auto-scale
-        # We handle limits LAST so that auto-scale can see all added artists
-        
-        # X Axis
         if style.x_limits:
             self.ax.set_xlim(style.x_limits)
         else:
             self.ax.autoscale(enable=True, axis='x', tight=False)
             
-        # Y Axis
         if style.y_limits:
             self.ax.set_ylim(style.y_limits)
         else:
             self.ax.autoscale(enable=True, axis='y', tight=False)
+
+        # 4. Legend (New Feature)
+        if style.show_legend:
+            # Only show legend if there are labeled items
+            handles, labels = self.ax.get_legend_handles_labels()
+            if handles:
+                # Create legend and make it draggable
+                leg = self.ax.legend(handles, labels)
+                leg.set_draggable(True)
 
         self.draw()
 
@@ -131,6 +136,8 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
 
     def _draw_rectangle(self, data: Rectangle):
         if not data.Visible: return
+        # Use 'label' kwarg so legend picks it up automatically if Label is not empty
+        label = data.Label if data.Label else None
         r = patches.Rectangle(
             (data.X, data.Y), data.Width, data.Height,
             linewidth=data.Linewidth,
@@ -139,20 +146,23 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
             hatch=data.Hatch,
             alpha=data.Alpha,
             zorder=data.Zorder,
-            picker=True
+            picker=True,
+            label=label
         )
         self.ax.add_patch(r)
         self.artist_to_data_map[r] = data
 
     def _draw_line(self, data: Line):
         if not data.Visible: return
+        label = data.Label if data.Label else None
         l = mlines.Line2D(
             [data.X1, data.X2], [data.Y1, data.Y2],
             linewidth=data.Linewidth,
             linestyle=data.Linestyle,
             color=data.Color,
             zorder=data.Zorder,
-            picker=5
+            picker=5,
+            label=label
         )
         self.ax.add_line(l)
         self.artist_to_data_map[l] = data
@@ -160,7 +170,7 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
     def _draw_curve(self, data: Curve):
         if not data.Visible: return
         if not data.X or not data.Y: return 
-            
+        label = data.Label if data.Label else None    
         l = mlines.Line2D(
             data.X, data.Y,
             linewidth=data.Linewidth,
@@ -171,13 +181,15 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
             markerfacecolor=data.Markerfacecolor,
             markeredgecolor=data.Markeredgecolor,
             zorder=data.Zorder,
-            picker=5
+            picker=5,
+            label=label
         )
         self.ax.add_line(l)
         self.artist_to_data_map[l] = data
 
     def _draw_text(self, data: TextContent):
         if not data.Visible: return
+        # Text doesn't usually appear in legend, but we map it anyway
         t = self.ax.text(
             data.X, data.Y, data.Content,
             fontsize=data.Fontsize,
@@ -193,13 +205,15 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
 
     def _draw_arrow(self, data: Arrow):
         if not data.Visible: return
+        label = data.Label if data.Label else None
         a = patches.FancyArrowPatch(
             (data.X1, data.Y1), (data.X2, data.Y2),
             arrowstyle=data.Arrowstyle,
             mutation_scale=data.MutationScale,
             color=data.Color,
             zorder=data.Zorder,
-            picker=5
+            picker=5,
+            label=label
         )
         self.ax.add_patch(a)
         self.artist_to_data_map[a] = data
@@ -207,6 +221,7 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
     def _draw_fill(self, data: Fill):
         if not data.Visible: return
         if not data.X or not data.Y1 or not data.Y2: return
+        label = data.Label if data.Label else None
         X = np.array(data.X)
         Y1 = np.array(data.Y1)
         Y2 = np.array(data.Y2)
@@ -217,7 +232,8 @@ class MatplotlibCanvas(FigureCanvasQTAgg):
             facecolors=data.Color,
             alpha=data.Alpha,
             zorder=data.Zorder,
-            picker=True
+            picker=True,
+            label=label
         )
         self.ax.add_collection(p)
         self.artist_to_data_map[p] = data
