@@ -14,7 +14,7 @@ class LayerDefinitionDialog(QDialog):
         self.setWindowTitle("Define Simulation Layers")
         self.resize(600, 700)
         self.manager = MaterialManager()
-        
+
         self.layout = QVBoxLayout(self)
         
         # --- 1. Reflection Region (Source) ---
@@ -115,7 +115,8 @@ class LayerDefinitionDialog(QDialog):
         layers = data.get('layers', [])
         count = len(layers)
         self.spin_layer_count.setValue(count) # This triggers update_table_rows(count)
-        
+        if count == 1: # it cannot trigger if count is 1 because it is the default.
+            self.update_table_rows(1)
         # We need to explicitly set the data AFTER the spinbox signal fires
         for r, layer in enumerate(layers):
             # Material Combo

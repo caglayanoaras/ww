@@ -26,14 +26,8 @@ from waveweaver.plotting.dialogs import PlotParametersDialog
 from waveweaver.materials.dialog import MaterialLibraryDialog
 from waveweaver.materials.manager import MaterialManager
 from waveweaver.multilayer_simulation.layer_dialog import LayerDefinitionDialog
+from waveweaver.multilayer_simulation.engine import SimulationEngine
 
-# Import the calculation engine
-# Ensure waveweaver/multilayer_simulation/engine.py exists
-try:
-    from waveweaver.multilayer_simulation.engine import SimulationEngine
-except ImportError:
-    print("Warning: SimulationEngine not found. Calculation will fail.")
-    SimulationEngine = None
 
 class TabContext:
     """
@@ -134,15 +128,15 @@ class MultilayerSimulationApp(QWidget):
         
         self.tabs: Dict[int, TabContext] = {}
         
-        self.setup_model_a()
-        self.setup_model_b()
+        self.setup_model_0()
+        self.setup_model_1()
         self.change_model(0)
 
     def log_message(self, message: str):
         """Helper to append text to the console."""
         self.console_output.append(message)
 
-    def setup_model_a(self):
+    def setup_model_0(self):
         """Setup Inputs for Global S-Parameters (TMM)."""
         input_widget = QWidget()
         layout = QVBoxLayout(input_widget)
@@ -251,7 +245,7 @@ class MultilayerSimulationApp(QWidget):
         
         self.result_stack.addWidget(self.model_a_tab_widget)
 
-    def setup_model_b(self):
+    def setup_model_1(self):
         """Setup Inputs for Model B."""
         input_widget = QWidget()
         layout = QVBoxLayout(input_widget)
@@ -309,6 +303,8 @@ class MultilayerSimulationApp(QWidget):
             # Note: For complex simulations, run this in a QThread to avoid freezing UI.
             engine = SimulationEngine(params)
             results = engine.run()
+            # import time
+            # time.sleep(1)
             self.progress_bar.setValue(90)
             
             # 3. Plot Results
