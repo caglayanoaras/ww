@@ -1,5 +1,6 @@
 _wonderland/
 venv/
+build/
 __pycache__/
 *.pyc
 requirements.txt
