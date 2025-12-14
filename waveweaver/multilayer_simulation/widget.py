@@ -147,9 +147,9 @@ class MultilayerSimulationApp(QWidget):
         freq_layout = QFormLayout(grp_freq)
         freq_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         
-        self.inp_fstart = QLineEdit("1.0")
+        self.inp_fstart = QLineEdit("4.0")
         self.inp_fstart.setValidator(QDoubleValidator())
-        self.inp_fstop = QLineEdit("20.0")
+        self.inp_fstop = QLineEdit("40.0")
         self.inp_fstop.setValidator(QDoubleValidator())
         self.inp_fpoints = QLineEdit("1001")
         self.inp_fpoints.setValidator(QIntValidator())

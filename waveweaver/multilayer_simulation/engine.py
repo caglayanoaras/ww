@@ -43,8 +43,8 @@ class SimulationEngine:
         mu_i = np.array([p.mu_primeprime for p in sorted_pts])
         
         if len(f_data) == 1:
-            eps_c = (eps_r[0] - 1j * eps_i[0]) * np.ones_like(self.freqs)
-            mu_c = (mu_r[0] - 1j * mu_i[0]) * np.ones_like(self.freqs)
+            eps_c = (eps_r[0] + 1j * eps_i[0]) * np.ones_like(self.freqs)
+            mu_c = (mu_r[0] + 1j * mu_i[0]) * np.ones_like(self.freqs)
             return eps_c, mu_c
 
         e_real = np.interp(self.freqs, f_data, eps_r)
@@ -52,7 +52,30 @@ class SimulationEngine:
         m_real = np.interp(self.freqs, f_data, mu_r)
         m_imag = np.interp(self.freqs, f_data, mu_i)
         
-        return (e_real - 1j * e_imag), (m_real - 1j * m_imag)
+        # Positive sign convention
+        return (e_real + 1j * e_imag), (m_real + 1j * m_imag)
+
+    def redheffer_star_product(
+            self, 
+            SA: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+            SB: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Computes the Redheffer Star Product of two S-matrices."""
+
+        I = np.eye(2, dtype=complex)
+
+        S11a, S12a, S21a, S22a = SA
+        S11b, S12b, S21b, S22b = SB
+        
+        i1 = np.linalg.solve(I - np.matmul(S22a, S11b), I)
+        i2 = np.linalg.solve(I - np.matmul(S11b, S22a), I)
+        
+        S11 = S11a + np.matmul(S12a, np.matmul(i1, np.matmul(S11b, S21a)))
+        S12 = np.matmul(S12a, np.matmul(i1, S12b))
+        S21 = np.matmul(S21b, np.matmul(i2, S21a))
+        S22 = S22b + np.matmul(S21b, np.matmul(i2, np.matmul(S22a, S12b)))
+        return S11, S12, S21, S22
+
 
     def run(self) -> Dict[str, np.ndarray]:
         theta = np.radians(self.params['theta'])
@@ -99,10 +122,11 @@ class SimulationEngine:
             ur1 = mu_ref[i]
             er1 = eps_ref[i]
             n1 = np.sqrt(ur1 * er1)
+            if np.imag(n1) < 0:
+                n1 = -n1
             
             kx_n = n1 * np.sin(theta) * np.cos(phi)
             ky_n = n1 * np.sin(theta) * np.sin(phi)
-            
             # 2. SMART GAP MEDIUM
             # Fixes grazing angle singularities
             ug = 1.0 + 0j
@@ -134,13 +158,8 @@ class SimulationEngine:
                 
                 kz_sq = ur*er - kx_n**2 - ky_n**2
                 kz = np.sqrt(kz_sq + 0j)
-                
-                # CRITICAL FIX: Enforce Decay for lossy/evanescent waves
-                # We use exp(-1j * kz * z).
-                # If kz has negative imag part (-j*alpha), then -1j*(-j*alpha) = -alpha (Decay).
-                # Numpy sqrt gives +Im. So we conjugate if Im > 0.
-                if np.imag(kz) > 0:
-                    kz = np.conj(kz)
+                if np.imag(kz) < 0:
+                    kz = -kz
 
                 Q = (1/ur) * np.array([
                     [kx_n*ky_n,       ur*er - kx_n**2],
@@ -149,8 +168,7 @@ class SimulationEngine:
                 
                 V = -1j * Q / kz
                 
-                # Phase Matrix X = exp(-j * kz * k0 * L)
-                X_val = np.exp(-1j * kz * k0_val * L)
+                X_val = np.exp(1j * kz * k0_val * L)
                 X = np.diag([X_val, X_val])
                 
                 # Interface Matrices
@@ -174,22 +192,16 @@ class SimulationEngine:
                 S22_l = S11_l
                 
                 # Redheffer Star Product
-                F = np.linalg.solve(I - np.matmul(S22_g, S11_l), I)
-                int1 = np.linalg.solve(I - np.matmul(S11_l, S22_g), I)
-                
-                S11_new = S11_g + np.matmul(S12_g, np.matmul(int1, np.matmul(S11_l, S21_g)))
-                S12_new = np.matmul(S12_g, np.matmul(int1, S12_l))
-                S21_new = np.matmul(S21_l, np.matmul(F, S21_g))
-                S22_new = S22_l + np.matmul(S21_l, np.matmul(F, np.matmul(S22_g, S12_l)))
-                
-                S11_g, S12_g, S21_g, S22_g = S11_new, S12_new, S21_new, S22_new
+                S11_g, S12_g, S21_g, S22_g = self.redheffer_star_product(
+                    (S11_g, S12_g, S21_g, S22_g), 
+                    (S11_l, S12_l, S21_l, S22_l))
             
             # 5. Connect External Regions
             # Reflection Side
             kz_ref_sq = ur1*er1 - kx_n**2 - ky_n**2
             kz_ref = np.sqrt(kz_ref_sq + 0j)
-            if np.imag(kz_ref) > 0: kz_ref = np.conj(kz_ref)
-            
+            if np.imag(kz_ref) < 0:
+                kz_ref = -kz_ref
             Q_ref = (1/ur1) * np.array([
                 [kx_n*ky_n,       ur1*er1 - kx_n**2],
                 [ky_n**2 - ur1*er1, -kx_n*ky_n]
@@ -210,8 +222,9 @@ class SimulationEngine:
             er2 = eps_trn[i]
             kz_trn_sq = ur2*er2 - kx_n**2 - ky_n**2
             kz_trn = np.sqrt(kz_trn_sq + 0j)
-            if np.imag(kz_trn) > 0: kz_trn = np.conj(kz_trn)
-            
+            if np.imag(kz_trn) < 0:
+                kz_trn = -kz_trn
+
             Q_trn = (1/ur2) * np.array([
                 [kx_n*ky_n,       ur2*er2 - kx_n**2],
                 [ky_n**2 - ur2*er2, -kx_n*ky_n]
@@ -227,22 +240,9 @@ class SimulationEngine:
             S22_t = np.matmul(-invA_trn, B_trn)
             S12_t = 0.5 * (A_trn - np.matmul(B_trn, np.matmul(invA_trn, B_trn)))
             
-            # 6. Final Global Combination
-            def star(SA, SB):
-                S11a, S12a, S21a, S22a = SA
-                S11b, S12b, S21b, S22b = SB
-                
-                i1 = np.linalg.solve(I - np.matmul(S22a, S11b), I)
-                i2 = np.linalg.solve(I - np.matmul(S11b, S22a), I)
-                
-                S11 = S11a + np.matmul(S12a, np.matmul(i1, np.matmul(S11b, S21a)))
-                S12 = np.matmul(S12a, np.matmul(i1, S12b))
-                S21 = np.matmul(S21b, np.matmul(i2, S21a))
-                S22 = S22b + np.matmul(S21b, np.matmul(i2, np.matmul(S22a, S12b)))
-                return S11, S12, S21, S22
-            
-            S_temp = star((S11_r, S12_r, S21_r, S22_r), (S11_g, S12_g, S21_g, S22_g))
-            S_G = star(S_temp, (S11_t, S12_t, S21_t, S22_t))
+            # 6. Final Global Combination     
+            S_temp = self.redheffer_star_product((S11_r, S12_r, S21_r, S22_r), (S11_g, S12_g, S21_g, S22_g))
+            S_G = self.redheffer_star_product(S_temp, (S11_t, S12_t, S21_t, S22_t))
             
             # 7. Project S-Parameters
             b1 = np.matmul(S_G[0], a_inc)
