@@ -1,6 +1,7 @@
 import sys
 import os
 import math
+import json
 import numpy as np
 from typing import Dict, Type, Optional, get_origin, List
 from PySide6.QtWidgets import (
@@ -8,7 +9,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QMenuBar, QMenu, QMainWindow, QApplication,
     QLabel, QDialogButtonBox, QComboBox, QStackedWidget,
     QTextEdit, QProgressBar, QFrame, QPushButton, QGroupBox, 
-    QLineEdit, QFormLayout, QGridLayout
+    QLineEdit, QFormLayout, QGridLayout, QFileDialog, QMessageBox
 )
 from PySide6.QtGui import QAction, QIcon, QDoubleValidator, QIntValidator
 from PySide6.QtCore import Qt
@@ -58,6 +59,7 @@ class MultilayerSimulationApp(QWidget):
         
         self.material_manager = MaterialManager() 
         self.current_layer_data = None 
+        self.last_results_a = None # Store results for saving
         
         icon_path = os.path.join("resources", "ww_icon.ico")
         if os.path.exists(icon_path):
@@ -303,6 +305,8 @@ class MultilayerSimulationApp(QWidget):
             # Note: For complex simulations, run this in a QThread to avoid freezing UI.
             engine = SimulationEngine(params)
             results = engine.run()
+            self.last_results_a = results # Store results for saving
+            
             # import time
             # time.sleep(1)
             self.progress_bar.setValue(90)
@@ -391,6 +395,15 @@ class MultilayerSimulationApp(QWidget):
         """
         context = self.get_tab_context("Layers")
         if not context: return
+        
+        # Guard: if data is None, clear canvas and return
+        if not data:
+            context.model.rectangles.clear()
+            context.model.lines.clear()
+            context.model.texts.clear()
+            context.model.arrows.clear()
+            context.widget.render(context.model)
+            return
 
         # 1. Get & Normalize Inputs
         try:
@@ -432,7 +445,7 @@ class MultilayerSimulationApp(QWidget):
         DIM_X = X_MAX + 5
         DIM_TEXT_X = DIM_X + 7
         
-        layers = data['layers']
+        layers = data.get('layers', [])
         phys_thicknesses = [l['thickness'] for l in layers]
         total_phys_thick = sum(phys_thicknesses)
         if total_phys_thick <= 0: total_phys_thick = 1.0
@@ -458,7 +471,7 @@ class MultilayerSimulationApp(QWidget):
             return "white", "black", ""
 
         # A. Reflection Region
-        ref_mat = data['reflection_material']
+        ref_mat = data.get('reflection_material', 'Air')
         fc, ec, ha = get_mat_props(ref_mat)
         model.add_element(Rectangle(
             X=X_MIN, Y=Y_START, Width=X_MAX, Height=40,
@@ -516,7 +529,7 @@ class MultilayerSimulationApp(QWidget):
             current_y -= vis_height
 
         # C. Transmission Region
-        trans_mat = data['transmission_material']
+        trans_mat = data.get('transmission_material', 'Air')
         fc, ec, ha = get_mat_props(trans_mat)
         model.add_element(Rectangle(
             X=X_MIN, Y=-40, Width=X_MAX, Height=40,
@@ -532,11 +545,26 @@ class MultilayerSimulationApp(QWidget):
 
     # --- BOILERPLATE METHODS ---
     def setup_menu(self):
+        # File Menu
+        file_menu = self.menu_bar.addMenu("File")
+        
+        save_action = QAction("Save State...", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self.save_state_handler)
+        file_menu.addAction(save_action)
+        
+        load_action = QAction("Load State...", self)
+        load_action.setShortcut("Ctrl+O")
+        load_action.triggered.connect(self.load_state_handler)
+        file_menu.addAction(load_action)
+
+        # Figure Menu
         figure_menu = self.menu_bar.addMenu("Figure")
         params_action = QAction("Parameters", self)
         params_action.triggered.connect(self.open_parameters_dialog)
         figure_menu.addAction(params_action)
         figure_menu.addSeparator()
+        
         draw_menu = figure_menu.addMenu("Draw")
         def add_draw_action(name, pydantic_cls):
             action = QAction(name, self)
@@ -548,6 +576,8 @@ class MultilayerSimulationApp(QWidget):
         add_draw_action("Text", TextContent)
         add_draw_action("Curve", Curve)
         add_draw_action("Fill", Fill)
+        
+        # Materials Menu
         materials_menu = self.menu_bar.addMenu("Materials")
         lib_action = QAction("Material Library", self)
         lib_action.triggered.connect(self.open_material_library)
@@ -601,6 +631,134 @@ class MultilayerSimulationApp(QWidget):
     def open_material_library(self):
         dialog = MaterialLibraryDialog(self)
         dialog.exec()
+
+    # --- SAVE / LOAD STATE IMPLEMENTATION ---
+
+    def _serialize_results(self, results):
+        """Converts complex numpy arrays to a JSON-friendly format."""
+        if not results: return None
+        serializable = {}
+        for k, v in results.items():
+            if isinstance(v, np.ndarray):
+                if np.iscomplexobj(v):
+                    # Save complex as {real: [...], imag: [...]}
+                    serializable[k] = {"__complex__": True, "real": v.real.tolist(), "imag": v.imag.tolist()}
+                else:
+                    serializable[k] = v.tolist()
+            else:
+                serializable[k] = v
+        return serializable
+
+    def _deserialize_results(self, data):
+        """Reconstructs numpy arrays from JSON data."""
+        if not data: return None
+        results = {}
+        for k, v in data.items():
+            if isinstance(v, dict) and v.get("__complex__") is True:
+                results[k] = np.array(v["real"]) + 1j * np.array(v["imag"])
+            elif isinstance(v, list):
+                results[k] = np.array(v)
+            else:
+                results[k] = v
+        return results
+
+    def save_state_handler(self):
+        # Use os.getcwd() as starting dir to be safe
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Simulation State", os.getcwd(), "JSON Files (*.json)")
+        if not file_path:
+            return
+
+        # Ensure extension
+        if not file_path.lower().endswith(".json"):
+            file_path += ".json"
+
+        try:
+            # Ensure directory exists (fixes FileNotFoundError on write if dir is missing)
+            dir_name = os.path.dirname(file_path)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+
+            state = {
+                "version": "1.0",
+                "active_model": self.model_selector.currentIndex(),
+                "model_a": {
+                    "inputs": {
+                        "fstart": self.inp_fstart.text(),
+                        "fstop": self.inp_fstop.text(),
+                        "fpoints": self.inp_fpoints.text(),
+                        "theta": self.inp_theta.text(),
+                        "phi": self.inp_phi.text(),
+                        "pte": self.inp_pte.text(),
+                        "ptm": self.inp_ptm.text(),
+                        "layers": self.current_layer_data
+                    },
+                    "results": self._serialize_results(self.last_results_a)
+                },
+                "model_b": {
+                    "inputs": {}, # Placeholder for Model B inputs
+                    "results": None
+                }
+            }
+
+            with open(file_path, 'w') as f:
+                json.dump(state, f, indent=4)
+            
+            self.log_message(f"State saved to {file_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save state: {str(e)}")
+
+    def load_state_handler(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Simulation State", "", "JSON Files (*.json)")
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r') as f:
+                state = json.load(f)
+
+            # 1. Restore Active Model
+            idx = state.get("active_model", 0)
+            if 0 <= idx < self.model_selector.count():
+                self.model_selector.setCurrentIndex(idx)
+
+            # 2. Restore Model A Data
+            model_a_data = state.get("model_a", {})
+            inputs_a = model_a_data.get("inputs", {})
+            
+            if "fstart" in inputs_a: self.inp_fstart.setText(inputs_a["fstart"])
+            if "fstop" in inputs_a: self.inp_fstop.setText(inputs_a["fstop"])
+            if "fpoints" in inputs_a: self.inp_fpoints.setText(inputs_a["fpoints"])
+            if "theta" in inputs_a: self.inp_theta.setText(inputs_a["theta"])
+            if "phi" in inputs_a: self.inp_phi.setText(inputs_a["phi"])
+            if "pte" in inputs_a: self.inp_pte.setText(inputs_a["pte"])
+            if "ptm" in inputs_a: self.inp_ptm.setText(inputs_a["ptm"])
+            
+            self.current_layer_data = inputs_a.get("layers", None)
+            self.draw_layers_on_canvas(self.current_layer_data)
+
+            # 3. Restore Model A Results
+            self.last_results_a = self._deserialize_results(model_a_data.get("results"))
+            
+            if self.last_results_a:
+                self.plot_s_parameters(
+                    self.last_results_a['freqs'], 
+                    self.last_results_a['S11'], 
+                    self.last_results_a['S21'], 
+                    self.last_results_a['S12'], 
+                    self.last_results_a['S22']
+                )
+                self.log_message(f"State loaded from {file_path}. Results restored.")
+            else:
+                self.log_message(f"State loaded from {file_path}. No results found.")
+
+            # 4. Handle Model B (Placeholder)
+            # if "model_b" in state: ...
+
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load state: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
