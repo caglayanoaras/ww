@@ -258,10 +258,11 @@ class SimulationEngine:
             S22_data[i] = np.vdot(a_inc, b2_back)
             S12_data[i] = np.vdot(a_inc, b1_back)
 
+        # Conjugate results to match HFSS (e^{j\omega t}) convention if engine uses e^{-j\omega t}
         return {
             'freqs': self.freqs / 1e9,
-            'S11': S11_data,
-            'S21': S21_data,
-            'S12': S12_data,
-            'S22': S22_data
+            'S11': np.conj(S11_data),
+            'S21': np.conj(S21_data),
+            'S12': np.conj(S12_data),
+            'S22': np.conj(S22_data)
         }

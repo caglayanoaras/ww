@@ -26,9 +26,10 @@ from waveweaver.common.custom_widgets import ReadTabularDialog
 from waveweaver.plotting.dialogs import PlotParametersDialog
 from waveweaver.materials.dialog import MaterialLibraryDialog
 from waveweaver.materials.manager import MaterialManager
-from waveweaver.multilayer_simulation.layer_dialog import LayerDefinitionDialog
+from waveweaver.multilayer_simulation.layer_dialogs import LayerDefinitionDialog, OptimizationLayerDialog
 from waveweaver.multilayer_simulation.engine import SimulationEngine
-
+from waveweaver.multilayer_simulation.optimization_dialogs import TargetSParams, TargetPoint, TargetDefinitionDialog
+# Import NEW Optimization Layer Dialog
 
 class TabContext:
     """
@@ -61,6 +62,10 @@ class MultilayerSimulationApp(QWidget):
         self.current_layer_data = None 
         self.last_results_a = None # Store results for saving
         
+        # Model B Data
+        self.target_s_params = TargetSParams()
+        self.opt_layer_data = None # Store Optimization Layer Configuration
+        
         icon_path = os.path.join("resources", "ww_icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -92,7 +97,7 @@ class MultilayerSimulationApp(QWidget):
         
         self.left_layout.addWidget(QLabel("<b>Select Simulation Model:</b>"))
         self.model_selector = QComboBox()
-        self.model_selector.addItems(["Global S-Parameters (TMM)", "Model B (Experimental)"])
+        self.model_selector.addItems(["Global S-Parameters (TMM)", "Global S-Parameters Optimization (Geometry)"])
         self.model_selector.currentIndexChanged.connect(self.change_model)
         self.left_layout.addWidget(self.model_selector)
         
@@ -162,7 +167,7 @@ class MultilayerSimulationApp(QWidget):
         
         layout.addWidget(grp_freq)
 
-        # 2. Source Parameters (Moved ABOVE Structure)
+        # 2. Source Parameters
         grp_source = QGroupBox("Source Parameters")
         source_layout = QGridLayout(grp_source)
         
@@ -178,7 +183,6 @@ class MultilayerSimulationApp(QWidget):
         self.inp_ptm = QLineEdit("0.0")
         self.inp_ptm.setValidator(QDoubleValidator())
 
-        # Grid Alignment
         source_layout.addWidget(QLabel("Theta (°):"), 0, 0)
         source_layout.addWidget(self.inp_theta, 0, 1)
         source_layout.addWidget(QLabel("Phi (°):"), 0, 2)
@@ -226,7 +230,21 @@ class MultilayerSimulationApp(QWidget):
         # 4. Tabs
         self.model_a_tab_widget = QTabWidget()
         self.model_a_tab_widget.setDocumentMode(True)
-        self.model_a_tab_widget.setStyleSheet("""
+        self.model_a_tab_widget.setStyleSheet(self._tab_style())
+        
+        def add_tab_a(name):
+            context = TabContext(name)
+            self.model_a_tab_widget.addTab(context.widget, name)
+            self.tabs[id(context.widget)] = context
+            
+        add_tab_a("Layers")
+        add_tab_a("S-Parameters (dB)")
+        add_tab_a("S-Parameters (Phase)")
+        
+        self.result_stack.addWidget(self.model_a_tab_widget)
+
+    def _tab_style(self):
+        return """
             QTabWidget::pane { border: 1px solid #dcdcdc; background: white; top: -1px; }
             QTabBar::tab { background: #f0f0f0; border: 1px solid #dcdcdc; border-bottom: none;
                 border-top-left-radius: 6px; border-top-right-radius: 6px; min-width: 120px;
@@ -234,31 +252,82 @@ class MultilayerSimulationApp(QWidget):
             QTabBar::tab:selected { background: white; border-bottom: 1px solid white; color: #000000; font-weight: bold; margin-bottom: -1px; }
             QTabBar::tab:hover { background: #ffffff; color: #000000; }
             QTabBar::tab:!selected { margin-top: 4px; }
-        """)
-        
-        def add_tab(name):
-            context = TabContext(name)
-            self.model_a_tab_widget.addTab(context.widget, name)
-            self.tabs[id(context.widget)] = context
-            
-        add_tab("Layers")
-        add_tab("S-Parameters (dB)")
-        add_tab("S-Parameters (Phase)")
-        
-        self.result_stack.addWidget(self.model_a_tab_widget)
+        """
 
     def setup_model_1(self):
-        """Setup Inputs for Model B."""
+        """Setup Inputs for Model B (Global Optimization)."""
         input_widget = QWidget()
         layout = QVBoxLayout(input_widget)
         layout.setContentsMargins(0,0,0,0)
-        layout.addWidget(QLabel("Model B Inputs (TBD)"))
+        
+        # 1. Target Definition
+        grp_targets = QGroupBox("Optimization Targets")
+        target_layout = QVBoxLayout(grp_targets)
+        
+        self.btn_define_targets = QPushButton("Define Target S-Parameters...")
+        self.btn_define_targets.setFixedHeight(40)
+        self.btn_define_targets.clicked.connect(self.open_target_definition_dialog)
+        target_layout.addWidget(self.btn_define_targets)
+        
+        layout.addWidget(grp_targets)
+        
+        # 2. Source Parameters (Copied from Model A, separate variables for independence)
+        grp_source = QGroupBox("Source Parameters")
+        source_layout = QGridLayout(grp_source)
+        
+        self.inp_opt_theta = QLineEdit("0.0")
+        self.inp_opt_theta.setValidator(QDoubleValidator())
+        
+        self.inp_opt_phi = QLineEdit("0.0")
+        self.inp_opt_phi.setValidator(QDoubleValidator())
+        
+        self.inp_opt_pte = QLineEdit("1.0")
+        self.inp_opt_pte.setValidator(QDoubleValidator())
+        
+        self.inp_opt_ptm = QLineEdit("0.0")
+        self.inp_opt_ptm.setValidator(QDoubleValidator())
+
+        source_layout.addWidget(QLabel("Theta (°):"), 0, 0)
+        source_layout.addWidget(self.inp_opt_theta, 0, 1)
+        source_layout.addWidget(QLabel("Phi (°):"), 0, 2)
+        source_layout.addWidget(self.inp_opt_phi, 0, 3)
+
+        source_layout.addWidget(QLabel("pTE:"), 1, 0)
+        source_layout.addWidget(self.inp_opt_pte, 1, 1)
+        source_layout.addWidget(QLabel("pTM:"), 1, 2)
+        source_layout.addWidget(self.inp_opt_ptm, 1, 3)
+
+        layout.addWidget(grp_source)
+
+        # 3. Structure Definition (Optimization)
+        grp_struct = QGroupBox("Optimization Structure")
+        struct_layout = QVBoxLayout(grp_struct)
+        
+        self.btn_define_opt_layers = QPushButton("Define Optimization Layers...")
+        self.btn_define_opt_layers.setFixedHeight(40)
+        self.btn_define_opt_layers.setStyleSheet("font-weight: bold;")
+        self.btn_define_opt_layers.clicked.connect(self.open_opt_layer_definition_dialog)
+        
+        struct_layout.addWidget(self.btn_define_opt_layers)
+        layout.addWidget(grp_struct)
+        
         layout.addStretch()
         self.input_stack.addWidget(input_widget)
         
-        placeholder = QLabel("No Plotting Available for Model B")
-        placeholder.setAlignment(Qt.AlignCenter)
-        self.result_stack.addWidget(placeholder)
+        # 4. Result Tabs for Model B
+        self.model_b_tab_widget = QTabWidget()
+        self.model_b_tab_widget.setDocumentMode(True)
+        self.model_b_tab_widget.setStyleSheet(self._tab_style())
+        
+        def add_tab_b(name):
+            context = TabContext(name)
+            self.model_b_tab_widget.addTab(context.widget, name)
+            self.tabs[id(context.widget)] = context
+            
+        add_tab_b("Optimization Layers")
+        add_tab_b("Target Visualization")
+        
+        self.result_stack.addWidget(self.model_b_tab_widget)
 
     def change_model(self, index):
         self.input_stack.setCurrentIndex(index)
@@ -268,12 +337,68 @@ class MultilayerSimulationApp(QWidget):
     # --- ACTION HANDLERS ---
 
     def open_layer_definition_dialog(self):
-        """Opens the Layer Builder, populated with existing data if available."""
+        """Opens the Layer Builder for Model A."""
         dialog = LayerDefinitionDialog(self, initial_data=self.current_layer_data)
         if dialog.exec():
             self.current_layer_data = dialog.get_layer_data()
             self.draw_layers_on_canvas(self.current_layer_data)
             self.log_message(f"Updated Layer Stack with {len(self.current_layer_data['layers'])} device layers.")
+
+    def open_opt_layer_definition_dialog(self):
+        """Opens the Optimization Layer Builder for Model B."""
+        dialog = OptimizationLayerDialog(self, initial_data=self.opt_layer_data)
+        if dialog.exec():
+            self.opt_layer_data = dialog.get_layer_data()
+            self.draw_layers_on_canvas(self.opt_layer_data, model_b=True)
+            self.log_message(f"Updated Optimization Layers with {len(self.opt_layer_data['layers'])} layers.")
+
+    def open_target_definition_dialog(self):
+        """Opens the Model B target definition dialog."""
+        dialog = TargetDefinitionDialog(current_targets=self.target_s_params, parent=self)
+        if dialog.exec():
+            self.target_s_params = dialog.get_targets()
+            self.log_message("Target S-Parameters updated.")
+            self.visualize_targets()
+
+    def visualize_targets(self):
+        """Plots the defined target points on the Target Visualization tab."""
+        context = self.get_tab_context("Target Visualization", model_b=True)
+        if not context: return
+        
+        model = context.model
+        model.curves.clear()
+        
+        model.axes_style.title = "Target S-Parameters"
+        model.axes_style.x_label = "Frequency (GHz)"
+        model.axes_style.y_label = "Amplitude"
+        model.axes_style.grid_linestyle = "Dashed Line"
+        model.axes_style.x_limits = None
+        model.axes_style.y_limits = None
+        
+        # Helper to extract points
+        def get_xy(points: List[TargetPoint]):
+            if not points: return [], []
+            # Sort just in case
+            sorted_pts = sorted(points, key=lambda p: p.frequency)
+            return [p.frequency for p in sorted_pts], [p.amplitude for p in sorted_pts]
+
+        x11, y11 = get_xy(self.target_s_params.S11)
+        if x11:
+            model.add_element(Curve(X=x11, Y=y11, Color="blue", Label="Target S11", Marker="o", Linestyle="None"))
+            
+        x21, y21 = get_xy(self.target_s_params.S21)
+        if x21:
+            model.add_element(Curve(X=x21, Y=y21, Color="red", Label="Target S21", Marker="o", Linestyle="None"))
+
+        x12, y12 = get_xy(self.target_s_params.S12)
+        if x12:
+            model.add_element(Curve(X=x12, Y=y12, Color="green", Label="Target S12", Marker="o", Linestyle="None"))
+
+        x22, y22 = get_xy(self.target_s_params.S22)
+        if x22:
+            model.add_element(Curve(X=x22, Y=y22, Color="orange", Label="Target S22", Marker="o", Linestyle="None"))
+            
+        context.widget.render(model)
 
     def run_calculation(self):
         """Validates inputs and runs the simulation."""
@@ -382,18 +507,21 @@ class MultilayerSimulationApp(QWidget):
             
             phase_tab.widget.render(model)
 
-    def get_tab_context(self, tab_name) -> Optional[TabContext]:
-        for i in range(self.model_a_tab_widget.count()):
-            if self.model_a_tab_widget.tabText(i) == tab_name:
-                widget = self.model_a_tab_widget.widget(i)
+    def get_tab_context(self, tab_name, model_b=False) -> Optional[TabContext]:
+        tab_widget = self.model_b_tab_widget if model_b else self.model_a_tab_widget
+        for i in range(tab_widget.count()):
+            if tab_widget.tabText(i) == tab_name:
+                widget = tab_widget.widget(i)
                 return self.tabs.get(id(widget))
         return None
 
-    def draw_layers_on_canvas(self, data: dict):
+    def draw_layers_on_canvas(self, data: dict, model_b=False):
         """
         Visualizes the layer stack VERTICALLY (Z-axis).
+        Supports both Model A and Model B.
         """
-        context = self.get_tab_context("Layers")
+        tab_name = "Optimization Layers" if model_b else "Layers"
+        context = self.get_tab_context(tab_name, model_b=model_b)
         if not context: return
         
         # Guard: if data is None, clear canvas and return
@@ -407,9 +535,14 @@ class MultilayerSimulationApp(QWidget):
 
         # 1. Get & Normalize Inputs
         try:
-            theta_deg = float(self.inp_theta.text())
-            pTE = float(self.inp_pte.text())
-            pTM = float(self.inp_ptm.text())
+            if model_b:
+                theta_deg = float(self.inp_opt_theta.text())
+                pTE = float(self.inp_opt_pte.text())
+                pTM = float(self.inp_opt_ptm.text())
+            else:
+                theta_deg = float(self.inp_theta.text())
+                pTE = float(self.inp_pte.text())
+                pTM = float(self.inp_ptm.text())
         except ValueError:
             theta_deg = 0.0
             pTE, pTM = 1.0, 0.0
@@ -426,7 +559,8 @@ class MultilayerSimulationApp(QWidget):
         model.texts.clear()
         model.arrows.clear()
         
-        model.axes_style.title = "Layer Stack (Z-Axis)"
+        title_suffix = " (Optimization)" if model_b else ""
+        model.axes_style.title = f"Layer Stack (Z-Axis){title_suffix}"
         model.axes_style.x_label = "Transverse"
         model.axes_style.y_label = "Propagation Direction (Z)"
         model.axes_style.hide_axis = True
@@ -522,10 +656,22 @@ class MultilayerSimulationApp(QWidget):
                 X1=DIM_X, Y1=rect_y, X2=DIM_X, Y2=rect_y+vis_height, 
                 Arrowstyle='<|-|>', Color='black', MutationScale=arrow_scale * 0.5
             ))
-            model.add_element(TextContent(
-                X=DIM_TEXT_X, Y=rect_y + vis_height/2, 
-                Content=f"{phys_thick} mm", Fontsize=font_size, HorizontalAlignment='left'
-            ))
+            
+            if model_b:
+                min_t = layer.get('min_thickness', 0)
+                max_t = layer.get('max_thickness', 0)
+                txt = f"[{min_t}-{max_t}] mm"
+                if layer.get('shuffle', False):
+                    txt += " (Shuffle)"
+                model.add_element(TextContent(
+                    X=DIM_TEXT_X, Y=rect_y + vis_height/2, 
+                    Content=txt, Fontsize=font_size, HorizontalAlignment='left'
+                ))
+            else:
+                model.add_element(TextContent(
+                    X=DIM_TEXT_X, Y=rect_y + vis_height/2, 
+                    Content=f"{phys_thick} mm", Fontsize=font_size, HorizontalAlignment='left'
+                ))
             current_y -= vis_height
 
         # C. Transmission Region
@@ -541,7 +687,10 @@ class MultilayerSimulationApp(QWidget):
         
         context.widget.canvas.ax.set_aspect('equal', adjustable='box')
         context.widget.render(model)
-        self.model_a_tab_widget.setCurrentIndex(0)
+        if model_b:
+            self.model_b_tab_widget.setCurrentIndex(0)
+        else:
+            self.model_a_tab_widget.setCurrentIndex(0)
 
     # --- BOILERPLATE METHODS ---
     def setup_menu(self):
@@ -586,6 +735,9 @@ class MultilayerSimulationApp(QWidget):
     def get_current_context(self) -> Optional[TabContext]:
         if self.model_selector.currentIndex() == 0:
             current_widget = self.model_a_tab_widget.currentWidget()
+            if current_widget: return self.tabs.get(id(current_widget))
+        elif self.model_selector.currentIndex() == 1:
+            current_widget = self.model_b_tab_widget.currentWidget()
             if current_widget: return self.tabs.get(id(current_widget))
         return None
 
@@ -663,7 +815,6 @@ class MultilayerSimulationApp(QWidget):
         return results
 
     def save_state_handler(self):
-        # Use os.getcwd() as starting dir to be safe
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Simulation State", os.getcwd(), "JSON Files (*.json)")
         if not file_path:
             return
@@ -673,13 +824,13 @@ class MultilayerSimulationApp(QWidget):
             file_path += ".json"
 
         try:
-            # Ensure directory exists (fixes FileNotFoundError on write if dir is missing)
+            # Ensure directory exists
             dir_name = os.path.dirname(file_path)
             if dir_name and not os.path.exists(dir_name):
                 os.makedirs(dir_name)
 
             state = {
-                "version": "1.0",
+                "version": "1.1",
                 "active_model": self.model_selector.currentIndex(),
                 "model_a": {
                     "inputs": {
@@ -695,7 +846,14 @@ class MultilayerSimulationApp(QWidget):
                     "results": self._serialize_results(self.last_results_a)
                 },
                 "model_b": {
-                    "inputs": {}, # Placeholder for Model B inputs
+                    "targets": self.target_s_params.model_dump(),
+                    "inputs": {
+                        "theta": self.inp_opt_theta.text(),
+                        "phi": self.inp_opt_phi.text(),
+                        "pte": self.inp_opt_pte.text(),
+                        "ptm": self.inp_opt_ptm.text(),
+                        "layers": self.opt_layer_data
+                    },
                     "results": None
                 }
             }
@@ -735,11 +893,10 @@ class MultilayerSimulationApp(QWidget):
             if "ptm" in inputs_a: self.inp_ptm.setText(inputs_a["ptm"])
             
             self.current_layer_data = inputs_a.get("layers", None)
-            self.draw_layers_on_canvas(self.current_layer_data)
+            if idx == 0 and self.current_layer_data:
+                self.draw_layers_on_canvas(self.current_layer_data)
 
-            # 3. Restore Model A Results
             self.last_results_a = self._deserialize_results(model_a_data.get("results"))
-            
             if self.last_results_a:
                 self.plot_s_parameters(
                     self.last_results_a['freqs'], 
@@ -748,12 +905,25 @@ class MultilayerSimulationApp(QWidget):
                     self.last_results_a['S12'], 
                     self.last_results_a['S22']
                 )
-                self.log_message(f"State loaded from {file_path}. Results restored.")
-            else:
-                self.log_message(f"State loaded from {file_path}. No results found.")
 
-            # 4. Handle Model B (Placeholder)
-            # if "model_b" in state: ...
+            # 3. Restore Model B Data
+            model_b_data = state.get("model_b", {})
+            if "targets" in model_b_data:
+                self.target_s_params = TargetSParams(**model_b_data["targets"])
+                if idx == 1:
+                    self.visualize_targets()
+            
+            inputs_b = model_b_data.get("inputs", {})
+            if "theta" in inputs_b: self.inp_opt_theta.setText(inputs_b["theta"])
+            if "phi" in inputs_b: self.inp_opt_phi.setText(inputs_b["phi"])
+            if "pte" in inputs_b: self.inp_opt_pte.setText(inputs_b["pte"])
+            if "ptm" in inputs_b: self.inp_opt_ptm.setText(inputs_b["ptm"])
+            
+            self.opt_layer_data = inputs_b.get("layers", None)
+            if idx == 1 and self.opt_layer_data:
+                self.draw_layers_on_canvas(self.opt_layer_data, model_b=True)
+
+            self.log_message(f"State loaded from {file_path}.")
 
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load state: {str(e)}")
