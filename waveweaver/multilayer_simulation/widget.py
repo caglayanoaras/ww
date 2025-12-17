@@ -26,10 +26,12 @@ from waveweaver.common.custom_widgets import ReadTabularDialog
 from waveweaver.plotting.dialogs import PlotParametersDialog
 from waveweaver.materials.dialog import MaterialLibraryDialog
 from waveweaver.materials.manager import MaterialManager
-from waveweaver.multilayer_simulation.layer_dialogs import LayerDefinitionDialog, OptimizationLayerDialog
 from waveweaver.multilayer_simulation.engine import SimulationEngine
 from waveweaver.multilayer_simulation.optimization_dialogs import TargetSParams, TargetPoint, TargetDefinitionDialog
 # Import NEW Optimization Layer Dialog
+from waveweaver.multilayer_simulation.layer_dialogs import LayerDefinitionDialog, OptimizationLayerDialog
+# Import Worker
+from waveweaver.multilayer_simulation.optimization_worker import OptimizationWorker
 
 class TabContext:
     """
@@ -65,6 +67,7 @@ class MultilayerSimulationApp(QWidget):
         # Model B Data
         self.target_s_params = TargetSParams()
         self.opt_layer_data = None # Store Optimization Layer Configuration
+        self.optimization_worker = None
         
         icon_path = os.path.join("resources", "ww_icon.ico")
         if os.path.exists(icon_path):
@@ -312,6 +315,23 @@ class MultilayerSimulationApp(QWidget):
         layout.addWidget(grp_struct)
         
         layout.addStretch()
+
+        # Optimize Button
+        self.btn_optimize = QPushButton("Optimize")
+        self.btn_optimize.setFixedHeight(50)
+        self.btn_optimize.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3; 
+                color: white; 
+                font-size: 16px; 
+                font-weight: bold; 
+                border-radius: 5px;
+            }
+            QPushButton:hover { background-color: #1976D2; }
+        """)
+        self.btn_optimize.clicked.connect(self.run_optimization)
+        layout.addWidget(self.btn_optimize)
+
         self.input_stack.addWidget(input_widget)
         
         # 4. Result Tabs for Model B
@@ -401,7 +421,7 @@ class MultilayerSimulationApp(QWidget):
         context.widget.render(model)
 
     def run_calculation(self):
-        """Validates inputs and runs the simulation."""
+        """Validates inputs and runs the simulation (Model A)."""
         if not self.current_layer_data:
             self.log_message("Error: Please define layers first.")
             return
@@ -457,6 +477,120 @@ class MultilayerSimulationApp(QWidget):
             self.log_message(f"Simulation Error: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def run_optimization(self):
+        """Handles Model B Optimization with Worker."""
+        if not self.opt_layer_data:
+            self.log_message("Error: Please define optimization structure first.")
+            return
+
+        # Check if targets exist
+        t = self.target_s_params
+        if not (t.S11 or t.S21 or t.S12 or t.S22):
+            self.log_message("Error: No target S-Parameters defined.")
+            return
+
+        # Stop previous worker if running
+        if self.optimization_worker and self.optimization_worker.isRunning():
+            self.optimization_worker.stop()
+            self.optimization_worker.wait()
+
+        try:
+            # 1. Gather Inputs
+            # Note: For Model B, we determine frequency range FROM THE TARGETS
+            # Find min/max freq across all targets to set up the engine space
+            all_freqs = []
+            for pts in [t.S11, t.S21, t.S12, t.S22]:
+                all_freqs.extend([p.frequency for p in pts])
+            
+            if not all_freqs:
+                self.log_message("Error: Targets have no frequency data.")
+                return
+            
+            f_min = min(all_freqs)
+            f_max = max(all_freqs)
+            
+            # We need enough points for decent interpolation in the objective function
+            # Let's say 200 points between min and max
+            f_points = 201 
+
+            params = {
+                'freq_start': f_min,
+                'freq_stop': f_max,
+                'freq_points': f_points,
+                'theta': float(self.inp_opt_theta.text()),
+                'phi': float(self.inp_opt_phi.text()),
+                'pTE': float(self.inp_opt_pte.text()),
+                'pTM': float(self.inp_opt_ptm.text()),
+                'layers': self.opt_layer_data
+            }
+
+            self.btn_optimize.setEnabled(False)
+            self.btn_optimize.setText("Running...")
+            
+            # 2. Instantiate Worker
+            self.optimization_worker = OptimizationWorker(params, self.target_s_params)
+            self.optimization_worker.progress_updated.connect(self.progress_bar.setValue)
+            self.optimization_worker.log_message.connect(self.log_message)
+            self.optimization_worker.result_ready.connect(self.on_optimization_finished)
+            self.optimization_worker.finished_optimization.connect(self.on_worker_finished)
+            
+            self.optimization_worker.start()
+            
+        except ValueError as e:
+            self.log_message(f"Input Error: {str(e)}")
+            self.btn_optimize.setEnabled(True)
+            self.btn_optimize.setText("Optimize")
+
+    def on_optimization_finished(self, data):
+        """Called when a valid optimization result is ready."""
+        best_layers = data['layers_config']
+        results = data['simulation_results']
+        
+        self.log_message("Updating Visualization with Optimized Result...")
+        
+        # Update Structure Data
+        self.opt_layer_data['layers'] = best_layers
+        self.draw_layers_on_canvas(self.opt_layer_data, model_b=True)
+        
+        # Add result curves to the Target Visualization tab (comparison)
+        self.plot_optimization_comparison(results)
+
+    def on_worker_finished(self):
+        """Cleanup after worker thread ends."""
+        self.btn_optimize.setEnabled(True)
+        self.btn_optimize.setText("Optimize")
+
+    def plot_optimization_comparison(self, results):
+        """Overlays optimized result on top of targets."""
+        context = self.get_tab_context("Target Visualization", model_b=True)
+        if not context: return
+        
+        # We assume targets are already drawn (dots). We draw lines for simulation.
+        model = context.model
+        # Remove old lines if any (keep markers)
+        # Strategy: Clear all and redraw targets, then draw lines
+        self.visualize_targets() # Redraws targets/dots
+        
+        freqs = results['freqs']
+        # Magnitude linear/dB? Targets input was "Amplitude". 
+        # Worker treats error as difference between (abs(S)) and (target).
+        # So we should plot linear magnitude.
+        
+        # However, typically people work in dB. 
+        # If user input dB targets, worker should convert sim to dB before error.
+        # CURRENT LOGIC: Worker assumed Linear for simplicity.
+        # Let's plot Linear Magnitude for now to match worker logic.
+        
+        def mag(c_val): return np.abs(c_val)
+
+        model.add_element(Curve(X=list(freqs), Y=list(mag(results['S11'])), Color="blue", Label="Sim S11", Linewidth=1.5, Alpha=0.6))
+        model.add_element(Curve(X=list(freqs), Y=list(mag(results['S21'])), Color="red", Label="Sim S21", Linewidth=1.5, Alpha=0.6))
+        model.add_element(Curve(X=list(freqs), Y=list(mag(results['S12'])), Color="green", Label="Sim S12", Linewidth=1.5, Alpha=0.6))
+        model.add_element(Curve(X=list(freqs), Y=list(mag(results['S22'])), Color="orange", Label="Sim S22", Linewidth=1.5, Alpha=0.6))
+        
+        context.widget.render(model)
+
 
     def plot_s_parameters(self, freqs, s11, s21, s12, s22):
         # --- Helper to convert to dB ---

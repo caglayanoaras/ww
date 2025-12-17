@@ -76,7 +76,6 @@ class SimulationEngine:
         S22 = S22b + np.matmul(S21b, np.matmul(i2, np.matmul(S22a, S12b)))
         return S11, S12, S21, S22
 
-
     def run(self) -> Dict[str, np.ndarray]:
         theta = np.radians(self.params['theta'])
         phi = np.radians(self.params['phi'])
@@ -266,3 +265,47 @@ class SimulationEngine:
             'S12': np.conj(S12_data),
             'S22': np.conj(S22_data)
         }
+
+if __name__ == "__main__":
+    # Example usage:
+    # Simulating a 10mm Air layer between Air reflection/transmission regions
+    # Should result in S11 ~ 0 and S21 ~ 1 (with phase shift)
+    
+    print("Running Simulation Engine Test...")
+    
+    params = {
+        'freq_start': 1.0,  # GHz
+        'freq_stop': 5.0,   # GHz
+        'freq_points': 5,
+        'theta': 0.0,       # Normal incidence
+        'phi': 0.0,
+        'pTE': 1.0,         # TE polarization
+        'pTM': 0.0,
+        'layers': {
+            'reflection_material': 'Air',
+            'transmission_material': 'Air',
+            'layers': [
+                {'material': 'Air', 'thickness': 10.0} # 10 mm
+            ]
+        }
+    }
+    
+    engine = SimulationEngine(params)
+    results = engine.run()
+    
+    print("\n--- Simulation Results ---")
+    print(f"{'Freq (GHz)':<12} | {'S11 (Mag)':<12} | {'S21 (Mag)':<12} | {'S21 (Phase deg)':<15}")
+    print("-" * 60)
+    
+    for i in range(len(results['freqs'])):
+        f = results['freqs'][i]
+        s11 = results['S11'][i]
+        s21 = results['S21'][i]
+        
+        mag_s11 = np.abs(s11)
+        mag_s21 = np.abs(s21)
+        phase_s21 = np.angle(s21, deg=True)
+        
+        print(f"{f:<12.2f} | {mag_s11:<12.4f} | {mag_s21:<12.4f} | {phase_s21:<15.2f}")
+    
+    print("\nTest Complete.")
