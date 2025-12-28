@@ -432,10 +432,14 @@ class MultilayerSimulationApp(QWidget):
 
         try:
             # 1. Gather Inputs
+            freqs = np.linspace(
+                    float(self.inp_fstart.text()), 
+                    float(self.inp_fstop.text()), 
+                    int(self.inp_fpoints.text())
+                ) * 1e9 # Convert GHz to Hz
+            
             params = {
-                'freq_start': float(self.inp_fstart.text()),
-                'freq_stop': float(self.inp_fstop.text()),
-                'freq_points': int(self.inp_fpoints.text()),
+                'freqs': freqs,
                 'theta': float(self.inp_theta.text()),
                 'phi': float(self.inp_phi.text()),
                 'pTE': float(self.inp_pte.text()),
@@ -497,27 +501,15 @@ class MultilayerSimulationApp(QWidget):
 
         try:
             # 1. Gather Inputs
-            # Note: For Model B, we determine frequency range FROM THE TARGETS
-            # Find min/max freq across all targets to set up the engine space
             all_freqs = []
             for pts in [t.S11, t.S21, t.S12, t.S22]:
                 all_freqs.extend([p.frequency for p in pts])
-            
             if not all_freqs:
                 self.log_message("Error: Targets have no frequency data.")
                 return
-            
-            f_min = min(all_freqs)
-            f_max = max(all_freqs)
-            
-            # We need enough points for decent interpolation in the objective function
-            # Let's say 200 points between min and max
-            f_points = 201 
-
+            freqs = np.unique(all_freqs)
             params = {
-                'freq_start': f_min,
-                'freq_stop': f_max,
-                'freq_points': f_points,
+                'freqs': freqs,
                 'theta': float(self.inp_opt_theta.text()),
                 'phi': float(self.inp_opt_phi.text()),
                 'pTE': float(self.inp_opt_pte.text()),
@@ -777,11 +769,11 @@ class MultilayerSimulationApp(QWidget):
             rect_y = current_y - vis_height
             
             model.add_element(Rectangle(
-                X=X_MIN, Y=rect_y, Width=X_MAX, Height=vis_height,
+                X=X_MIN, Y=rect_y, Width=X_MAX, Height=vis_height, Zorder=3,
                 Facecolor=fc, Edgecolor=ec, Hatch=ha, Label=f"Layer {i+1}"
             ))
             model.add_element(TextContent(
-                X=X_MID, Y=rect_y + vis_height/2, 
+                X=X_MID, Y=rect_y + vis_height/2, Zorder=5,
                 Content=f"{mat_name}", Fontsize=font_size
             ))
             

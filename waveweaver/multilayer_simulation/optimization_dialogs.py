@@ -1,28 +1,22 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QComboBox, 
     QLabel, QPushButton, QGroupBox, QDialogButtonBox, 
-    QWidget, QMessageBox, QFrame
+    QWidget, QMessageBox, QFrame, QTableWidgetItem
 )
 from PySide6.QtCore import Qt
 
 from waveweaver.common.custom_widgets import ExcelTableWidget
 
+# --- Your Pydantic Models (Unchanged) ---
 class TargetPoint(BaseModel):
-    """Represents a single target point (Frequency, Amplitude)."""
     model_config = ConfigDict(validate_assignment=True)
-    
-    frequency: float = 1.0 # GHz
-    amplitude: float = 0.0 # dB or Linear magnitude, treated as target value
+    frequency: float = 1.0 
+    amplitude: float = 0.0 
 
 class TargetSParams(BaseModel):
-    """
-    Container for optimization targets for all 4 S-parameters.
-    """
     model_config = ConfigDict(validate_assignment=True)
-
     S11: List[TargetPoint] = Field(default_factory=list)
     S21: List[TargetPoint] = Field(default_factory=list)
     S12: List[TargetPoint] = Field(default_factory=list)
@@ -41,7 +35,7 @@ class TargetSParams(BaseModel):
         elif param == "S12": self.S12 = []
         elif param == "S22": self.S22 = []
 
-
+# --- Updated Dialog Class ---
 class TargetDefinitionDialog(QDialog):
     """
     Dialog to define target S-parameters (Frequency vs Amplitude).
@@ -53,7 +47,6 @@ class TargetDefinitionDialog(QDialog):
         
         # Working copy of data
         if current_targets:
-            # Deep copy by dumping/validating to avoid modifying original until Save
             self.targets = TargetSParams(**current_targets.model_dump())
         else:
             self.targets = TargetSParams()
@@ -67,6 +60,7 @@ class TargetDefinitionDialog(QDialog):
         sel_layout.addWidget(QLabel("Select Parameter:"))
         self.combo_param = QComboBox()
         self.combo_param.addItems(["S11", "S21", "S12", "S22"])
+        # Note: We connect to the signal, but we might block it programmatically later
         self.combo_param.currentTextChanged.connect(self.on_param_changed)
         sel_layout.addWidget(self.combo_param)
         self.layout.addLayout(sel_layout)
@@ -97,14 +91,62 @@ class TargetDefinitionDialog(QDialog):
         # Initialize UI
         self.load_data_to_table(self.current_param)
 
-    def on_param_changed(self, text):
-        # 1. Save current table data to memory before switching
+    def validate_current_table(self) -> bool:
+        """
+        Checks for duplicate frequencies in the current table.
+        Returns True if valid, False if duplicates found.
+        """
+        rows = self.table.rowCount()
+        seen_freqs = set()
+        
+        for r in range(rows):
+            f_item = self.table.item(r, 0)
+            a_item = self.table.item(r, 1) # Check amplitude existence just to ensure row is 'active'
+
+            # Only check rows where at least frequency is entered
+            if f_item and f_item.text().strip():
+                try:
+                    freq_val = float(f_item.text())
+                    
+                    if freq_val in seen_freqs:
+                        QMessageBox.warning(
+                            self, 
+                            "Duplicate Frequency", 
+                            f"Duplicate frequency value <b>{freq_val}</b> found at row {r+1}.<br>"
+                            f"Please ensure all frequencies in {self.current_param} are unique."
+                        )
+                        return False # Validation failed
+                    
+                    seen_freqs.add(freq_val)
+                    
+                except ValueError:
+                    # Optional: Warn about invalid numbers here, or let save_table_to_memory skip them
+                    continue 
+
+        return True # Validation passed
+
+    def on_param_changed(self, new_param_text):
+        """
+        Triggered when the user selects a different S-parameter.
+        Validates the OLD table before switching to the NEW one.
+        """
+        # 1. Validate the current table (which corresponds to self.current_param)
+        if not self.validate_current_table():
+            # Validation failed! We must revert the combobox change.
+            
+            # Block signals so setting currentText doesn't trigger this function recursively
+            self.combo_param.blockSignals(True) 
+            self.combo_param.setCurrentText(self.current_param) # Set back to old param
+            self.combo_param.blockSignals(False)
+            return 
+
+        # 2. Save current table data to memory before switching
         self.save_table_to_memory(self.current_param)
         
-        # 2. Switch context
-        self.current_param = text
+        # 3. Switch context
+        self.current_param = new_param_text
         
-        # 3. Load new data
+        # 4. Load new data
         self.load_data_to_table(self.current_param)
         
     def save_table_to_memory(self, param_name):
@@ -145,7 +187,6 @@ class TargetDefinitionDialog(QDialog):
             self.table.setRowCount(len(points) + 5)
             
         for r, pt in enumerate(points):
-            from PySide6.QtWidgets import QTableWidgetItem
             self.table.setItem(r, 0, QTableWidgetItem(str(pt.frequency)))
             self.table.setItem(r, 1, QTableWidgetItem(str(pt.amplitude)))
 
@@ -153,7 +194,11 @@ class TargetDefinitionDialog(QDialog):
         self.table.clearContents()
 
     def save_and_accept(self):
-        # Save the currently visible table first
+        # 1. Validate the currently visible table
+        if not self.validate_current_table():
+            return # Stop here, do not close dialog
+            
+        # 2. Save the currently visible table
         self.save_table_to_memory(self.current_param)
         self.accept()
 

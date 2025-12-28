@@ -12,11 +12,7 @@ class SimulationEngine:
     def __init__(self, params: Dict[str, Any]):
         self.params = params
         self.manager = MaterialManager()
-        self.freqs = np.linspace(
-            params['freq_start'], 
-            params['freq_stop'], 
-            params['freq_points']
-        ) * 1e9 # Convert GHz to Hz
+        self.freqs = params["freqs"]
         
         self.c0 = 299792458
         self.mu0 = 4 * np.pi * 1e-7
@@ -272,11 +268,10 @@ if __name__ == "__main__":
     # Should result in S11 ~ 0 and S21 ~ 1 (with phase shift)
     
     print("Running Simulation Engine Test...")
-    
+    freqs = np.linspace(1.0,5.0,5) * 1e9 # Convert GHz to Hz
+  
     params = {
-        'freq_start': 1.0,  # GHz
-        'freq_stop': 5.0,   # GHz
-        'freq_points': 5,
+        'freqs': freqs,
         'theta': 0.0,       # Normal incidence
         'phi': 0.0,
         'pTE': 1.0,         # TE polarization

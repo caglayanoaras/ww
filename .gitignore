@@ -1,4 +1,6 @@
 _wonderland/
+resources/
+examples/
 venv/
 build/
 __pycache__/
