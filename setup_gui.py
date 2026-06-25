@@ -16,8 +16,8 @@ include_files = ['resources/']
 options= {
     "build_exe": {
         'include_files': include_files,
-        'excludes': ['unittest'],
-        'packages': ['OpenGL'],
+        'excludes': ['unittest', 'OpenGL', 'tkinter'],
+        'packages': ['scipy'],
         "zip_include_packages": ['PySide6', 'numpy'],
     },
 }
